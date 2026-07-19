@@ -1,0 +1,34 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 環境変数・認証情報
+.env
+.env.*
+!.env.example
+
+# GAS (clasp) 関連の認証情報
+.clasp.json
+.clasprc.json
+credentials.json
+token.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# エディタ
+.vscode/*
+!.vscode/settings.json
+*.log
+.screenshots/

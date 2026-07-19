@@ -1,0 +1,1546 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ナレッジ保存</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icons/icon-192.png">
+  <meta name="theme-color" content="#3949ab">
+  <style>
+    /* ============================================================
+       ナレッジ保存 PWA のスタイル
+       スマホ片手操作前提: ボタンは大きく(高さ64px以上)、2列グリッド
+       ============================================================ */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+      background: #f5f6fa;
+      color: #23272f;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #3949ab;
+      color: #fff;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 18px; font-weight: 600; }
+    .header-icons { display: flex; gap: 4px; }
+    .icon-button {
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 6px 8px;
+      line-height: 1;
+    }
+
+    main { padding: 16px; max-width: 480px; margin: 0 auto; }
+
+    /* 共有されたURLの表示枠 */
+    .shared-url {
+      background: #fff;
+      border: 1px solid #d7dae3;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      word-break: break-all;
+      color: #4a5060;
+    }
+    .shared-url .label {
+      display: block;
+      font-size: 12px;
+      color: #8a90a0;
+      margin-bottom: 4px;
+    }
+    /* 共有テキストから検出したタイトルらしき文字列（保存前の識別用ヒント） */
+    .title-hint-row { margin-bottom: 8px; }
+    .title-hint-row .label { display: block; font-size: 12px; color: #8a90a0; margin-bottom: 2px; }
+    .title-hint-row .value { font-size: 15px; font-weight: 600; color: #23272f; }
+
+    .section-title {
+      font-size: 14px;
+      color: #5a6070;
+      margin-bottom: 10px;
+    }
+
+    /* カテゴリボタン: 2列グリッド、高さ64px以上、押し間違い防止の間隔 */
+    .category-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .category-button {
+      min-height: 64px;
+      border: none;
+      border-radius: 12px;
+      background: #fff;
+      border: 2px solid #c9cede;
+      font-size: 15px;
+      font-weight: 600;
+      color: #2f3650;
+      cursor: pointer;
+      padding: 8px;
+      line-height: 1.3;
+      -webkit-tap-highlight-color: rgba(57, 73, 171, 0.2);
+    }
+    .category-button:active {
+      background: #e8eaf6;
+      border-color: #3949ab;
+    }
+    /* カテゴリ選択中の状態（タップ即保存ではなく、確定ボタンまでの選択状態を示す） */
+    .category-button-selected {
+      background: #e8eaf6;
+      border-color: #3949ab;
+    }
+
+    /* 手動入力（共有パラメータ無しで開いたとき＝PCブラウザからの新規保存） */
+    .manual-input-area { margin-bottom: 16px; }
+    .manual-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #c9cede;
+      border-radius: 10px;
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+    .manual-input:last-child { margin-bottom: 0; }
+    /* メモ欄（共有・手動どちらの保存フローでも常に表示する） */
+    .memo-input-area { margin-bottom: 16px; }
+
+    /* タグ選択チップ: スマホの指でも押しやすいよう44px以上の高さを確保する */
+    .tag-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .tag-button {
+      min-height: 44px;
+      padding: 8px 16px;
+      border-radius: 20px;
+      border: 2px solid #c9cede;
+      background: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      color: #2f3650;
+      cursor: pointer;
+      -webkit-tap-highlight-color: rgba(57, 73, 171, 0.2);
+    }
+    .tag-button-selected {
+      background: #3949ab;
+      border-color: #3949ab;
+      color: #fff;
+    }
+
+    /* 設定画面 */
+    .settings-panel { background: #fff; border-radius: 12px; padding: 16px; }
+    .settings-panel label {
+      display: block;
+      font-size: 13px;
+      color: #5a6070;
+      margin: 12px 0 4px;
+    }
+    .settings-panel input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #c9cede;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .settings-panel .note { font-size: 12px; color: #8a90a0; margin-top: 4px; }
+    .settings-section {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #eef0f5;
+    }
+
+    .primary-button {
+      display: block;
+      width: 100%;
+      min-height: 52px;
+      margin-top: 20px;
+      border: none;
+      border-radius: 10px;
+      background: #3949ab;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .primary-button:disabled {
+      background: #c9cede;
+      cursor: default;
+    }
+    .secondary-button {
+      display: block;
+      width: 100%;
+      min-height: 48px;
+      border: 2px solid #3949ab;
+      border-radius: 10px;
+      background: #fff;
+      color: #3949ab;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .link-button {
+      background: none;
+      border: none;
+      color: #3949ab;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 8px 0;
+      margin-bottom: 8px;
+    }
+
+    /* カテゴリ管理（設定画面内） */
+    .category-manage-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #eef0f5;
+      font-size: 14px;
+    }
+    .category-remove-button {
+      border: 1px solid #c62828;
+      color: #c62828;
+      background: #fff;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    /* 並び替え（↑/↓）ボタン: スマホの指でも押しやすい大きさを確保する */
+    .category-row-buttons { display: flex; gap: 6px; align-items: center; }
+    .category-move-button {
+      border: 1px solid #c9cede;
+      color: #3949ab;
+      background: #fff;
+      border-radius: 6px;
+      min-width: 40px;
+      min-height: 34px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .category-move-button:disabled {
+      color: #c9cede;
+      cursor: default;
+    }
+    .category-manage-row .category-name {
+      flex: 1;
+      margin-right: 8px;
+      word-break: break-all;
+    }
+    .category-add-row { display: flex; gap: 8px; margin-top: 12px; }
+    .category-add-row input {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #c9cede;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .category-add-row button {
+      border: none;
+      border-radius: 8px;
+      background: #3949ab;
+      color: #fff;
+      padding: 0 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    /* 記事一覧（カテゴリ別） */
+    .list-item {
+      display: block;
+      background: #fff;
+      border: 1px solid #d7dae3;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 10px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .list-item-date { font-size: 12px; color: #8a90a0; margin-bottom: 4px; }
+    .list-item-title { font-size: 15px; font-weight: 600; color: #3949ab; line-height: 1.4; }
+    .list-item-memo { font-size: 13px; color: #5a6070; margin-top: 4px; }
+    .empty-state { font-size: 14px; color: #8a90a0; text-align: center; padding: 32px 0; }
+
+    /* 送信中・完了・エラーの状態表示 */
+    .status-panel {
+      text-align: center;
+      padding: 48px 16px;
+    }
+    .status-panel .icon { font-size: 48px; margin-bottom: 16px; }
+    .status-panel .message { font-size: 16px; line-height: 1.6; }
+    .status-panel .detail {
+      font-size: 13px;
+      color: #6a7080;
+      margin-top: 12px;
+      word-break: break-all;
+    }
+    .status-panel.error .message { color: #c62828; }
+
+    .hidden { display: none; }
+
+    /* 一覧の「さらに読み込む」ボタン */
+    .load-more-button {
+      display: block;
+      width: 100%;
+      min-height: 48px;
+      border: 2px solid #c9cede;
+      border-radius: 10px;
+      background: #fff;
+      color: #3949ab;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+
+    /* 記事1件の行（記事リンク＋編集ボタンの横並び） */
+    .list-item-row { display: flex; align-items: stretch; gap: 8px; margin-bottom: 10px; }
+    .list-item-row .list-item { flex: 1; margin-bottom: 0; }
+    .list-item-edit {
+      flex: 0 0 auto;
+      align-self: center;
+      border: 1px solid #3949ab;
+      color: #3949ab;
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 44px;
+    }
+    .list-item-edit:active { background: #e8eaf6; }
+
+    /* ============================================================
+       レスポンシブ対応（PCブラウザ幅）
+       スマホ縦画面前提のスタイルは上で定義済み。ここでは画面が広いときだけ
+       上書きし、スマホ側の見た目・操作性には影響させない（メディアクエリ分岐）。
+       ============================================================ */
+    @media (min-width: 600px) {
+      /* コンテンツ幅を広げ、横長画面でも中央に読みやすい幅で表示する */
+      main { max-width: 720px; padding: 24px; }
+      /* カテゴリボタンは横に広いスペースを活かして3列にする */
+      .category-grid { grid-template-columns: repeat(3, 1fr); }
+      /* PCではポインタ操作のため、カテゴリボタン・記事にホバーの手がかりを出す */
+      .category-button:hover { border-color: #3949ab; background: #f0f2ff; }
+      .list-item:hover { border-color: #3949ab; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ナレッジ保存</h1>
+    <div class="header-icons">
+      <button id="driveShortcutButton" class="icon-button" type="button" aria-label="Driveを開く">📁</button>
+      <button id="listButton" class="icon-button" type="button" aria-label="一覧">📋</button>
+      <button id="settingsButton" class="icon-button" type="button" aria-label="設定">⚙</button>
+      <button id="exitButton" class="icon-button" type="button" aria-label="終了">✕</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ビュー1: カテゴリ選択（メイン画面） -->
+    <div id="mainView" class="hidden">
+      <div id="titleHintRow" class="title-hint-row hidden">
+        <span class="label">検出したタイトル（参考・共有元より）</span>
+        <span id="titleHintText" class="value"></span>
+      </div>
+      <div class="shared-url">
+        <span class="label">保存する記事のURL</span>
+        <span id="sharedUrlText"></span>
+      </div>
+      <!-- 共有パラメータ無しで開いたとき用のURL手動入力欄（PCブラウザからの新規保存用） -->
+      <div id="manualInputArea" class="manual-input-area hidden">
+        <input id="manualUrlInput" class="manual-input" type="url"
+               placeholder="https:// で始まるURLを入力">
+      </div>
+      <!-- メモ欄: 共有・手動どちらの保存フローでも常に表示する（任意項目） -->
+      <div class="memo-input-area">
+        <input id="manualMemoInput" class="manual-input" type="text"
+               placeholder="メモ（任意）">
+      </div>
+      <p class="section-title">カテゴリを選ぶ</p>
+      <div id="categoryGrid" class="category-grid"></div>
+      <p class="section-title">タグ（任意・複数選択可）</p>
+      <div id="tagGrid" class="tag-grid"></div>
+      <button id="mainConfirmButton" class="primary-button" type="button" disabled>この内容で保存</button>
+    </div>
+
+    <!-- ビュー2: 設定画面（初回起動時・⚙タップ時） -->
+    <div id="settingsView" class="hidden">
+      <div class="settings-panel">
+        <p class="section-title">はじめに設定してください</p>
+        <label for="gasUrlInput">GAS WebアプリのURL</label>
+        <input id="gasUrlInput" type="url" placeholder="https://script.google.com/macros/s/…/exec">
+        <p class="note">GASを「ウェブアプリ」としてデプロイしたときのURLです</p>
+        <label for="tokenInput">合言葉（GASのSHARED_TOKENと同じ値）</label>
+        <input id="tokenInput" type="text" placeholder="設定した合言葉">
+        <p class="note">GAS側で未設定なら空欄でかまいません</p>
+        <button id="saveSettingsButton" class="primary-button" type="button">保存する</button>
+
+        <div id="categoryManageSection" class="settings-section hidden">
+          <p class="section-title">カテゴリ管理</p>
+          <div id="categoryManageList"></div>
+          <div class="category-add-row">
+            <input id="newCategoryInput" type="text" placeholder="新しいカテゴリ名">
+            <button id="addCategoryButton" type="button">追加</button>
+          </div>
+          <p class="note">削除してもDriveに保存済みの記事は残ります。改名は「削除して追加」で対応してください。</p>
+        </div>
+
+        <div id="tagManageSection" class="settings-section hidden">
+          <p class="section-title">タグ管理</p>
+          <div id="tagManageList"></div>
+          <div class="category-add-row">
+            <input id="newTagInput" type="text" placeholder="新しいタグ名">
+            <button id="addTagButton" type="button">追加</button>
+          </div>
+          <p class="note">削除しても保存済み記事のタグは変わりません。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ビュー3: カテゴリ別一覧（カテゴリ選択） -->
+    <div id="listCategoryView" class="hidden">
+      <button id="listCategoryBackButton" class="link-button" type="button">← 保存画面に戻る</button>
+      <p class="section-title">カテゴリを選んで一覧表示</p>
+      <div id="listCategoryGrid" class="category-grid"></div>
+    </div>
+
+    <!-- ビュー4: カテゴリ別一覧（記事一覧） -->
+    <div id="listItemsView" class="hidden">
+      <button id="listItemsBackButton" class="link-button" type="button">← カテゴリ選択に戻る</button>
+      <p id="listItemsTitle" class="section-title"></p>
+      <div id="listItemsContainer"></div>
+    </div>
+
+    <!-- ビュー5: 完了（送信は fire-and-forget のため、送信直後に表示する） -->
+    <div id="doneView" class="status-panel hidden">
+      <div class="icon">✅</div>
+      <p class="message">保存しました！</p>
+      <p id="doneDetail" class="detail"></p>
+    </div>
+
+    <!-- ビュー6: エラー -->
+    <div id="errorView" class="status-panel error hidden">
+      <div class="icon">⚠️</div>
+      <p class="message">保存できませんでした</p>
+      <p id="errorDetail" class="detail"></p>
+      <button id="retryButton" class="primary-button" type="button">カテゴリ選択に戻る</button>
+    </div>
+
+    <!-- ビュー7: 記事の編集（一覧の「編集」から開く） -->
+    <div id="editView" class="hidden">
+      <button id="editBackButton" class="link-button" type="button">← 一覧に戻る</button>
+      <div class="settings-panel">
+        <p class="section-title">記事を編集</p>
+        <label for="editTitleInput">タイトル</label>
+        <input id="editTitleInput" type="text" placeholder="記事のタイトル">
+        <label for="editUrlInput">URL</label>
+        <input id="editUrlInput" type="url" placeholder="https:// で始まるURL">
+        <label for="editMemoInput">メモ（任意）</label>
+        <input id="editMemoInput" type="text" placeholder="メモ">
+        <p class="note">保存日時・カテゴリ・自動抽出された本文はそのまま保持されます。</p>
+        <button id="editSaveButton" class="primary-button" type="button">更新する</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    'use strict';
+
+    // ============================================================
+    // 定数・状態
+    // ============================================================
+
+    // localStorage に保存する設定のキー
+    var SETTINGS_KEY = 'knowledgeShareSettings';
+
+    // カテゴリ一覧のキャッシュキー（stale-while-revalidate 用）
+    // 起動のたびにGASの応答を待たず、前回取得した一覧で即座に描画するために使う
+    var CATEGORIES_CACHE_KEY = 'knowledgeShareCategoriesCache';
+
+    // 記事一覧のキャッシュキー（カテゴリ名→先頭ページの内容、のマップを保存する）
+    var LIST_CACHE_KEY = 'knowledgeShareListCache';
+
+    // カテゴリ一覧・タグ一覧・Driveフォルダ URL は起動時に GAS から動的取得する（ハードコードしない）
+    // listCategory / listItems は記事一覧画面の「さらに読み込む」用の表示中状態
+    // editingItem は編集ビューで編集中の記事（fileId等）を保持する
+    // selectedCategory / selectedTags は保存画面で選択中の内容（確定ボタンを押すまで保存しない）
+    var state = {
+      categories: [], tags: [], rootFolderUrl: '',
+      listCategory: '', listItems: [], editingItem: null,
+      selectedCategory: '', selectedTags: []
+    };
+
+    // ============================================================
+    // 共有パラメータの解析（純粋関数・テスト対象）
+    // ============================================================
+    // @shared-logic-start
+
+    /**
+     * 共有シート経由で渡されたクエリ文字列から、保存対象のURLとメモを取り出す。
+     *
+     * Androidの共有シートはアプリによって url / text / title のどこに
+     * URLを入れるかが揺れる（Chromeは text に入れることが多い）ため、
+     * shared_url → shared_text → shared_title の順にURLを探す。
+     * shared_text からURLを除いた残りは、記事タイトルの参考表示・ユーザーの
+     * 一言コメントの両方として扱う（共有元がどちらの意図で付けたかは区別できないため）。
+     *
+     * @param {string} queryString - location.search の文字列（例: "?shared_text=..."）
+     * @returns {{url: string, memo: string}} 見つからなければ url は空文字
+     */
+    function parseSharedParams(queryString) {
+      var params = new URLSearchParams(queryString || '');
+      var sharedUrl = params.get('shared_url') || '';
+      var sharedText = params.get('shared_text') || '';
+      var sharedTitle = params.get('shared_title') || '';
+
+      // URLらしき文字列を抜き出す正規表現（http/https のみ）
+      var urlPattern = /https?:\/\/[^\s"'<>]+/;
+
+      var url = '';
+      var memo = '';
+
+      // 優先順1: shared_url がそのままURLならそれを使う
+      var m = sharedUrl.match(urlPattern);
+      if (m) {
+        url = m[0];
+        memo = sharedText.replace(urlPattern, '').trim();
+      } else {
+        // 優先順2: shared_text の中からURLを探す（残りはメモとして扱う）
+        m = sharedText.match(urlPattern);
+        if (m) {
+          url = m[0];
+          memo = sharedText.replace(m[0], '').trim();
+        } else {
+          // 優先順3: shared_title の中からURLを探す
+          m = sharedTitle.match(urlPattern);
+          if (m) {
+            url = m[0];
+            memo = sharedText.trim();
+          }
+        }
+      }
+
+      return { url: url, memo: memo };
+    }
+
+    /**
+     * 配列の index 番目の要素を delta(+1/-1)方向の隣と入れ替えた新しい配列を返す純粋関数。
+     * 範囲外への移動（先頭をさらに上へ等）は何もせず元と同じ内容の配列を返す。
+     * カテゴリの並び替え（↑/↓ボタン）で使う。
+     *
+     * @param {Array} list - 元の配列（破壊しない）
+     * @param {number} index - 動かしたい要素の位置
+     * @param {number} delta - 移動方向（-1=上へ / +1=下へ）
+     * @returns {Array} 入れ替え後の新しい配列
+     */
+    function moveArrayItem(list, index, delta) {
+      var next = list.slice();
+      var target = index + delta;
+      if (index < 0 || index >= next.length || target < 0 || target >= next.length) {
+        return next;
+      }
+      var tmp = next[index];
+      next[index] = next[target];
+      next[target] = tmp;
+      return next;
+    }
+    // @shared-logic-end
+
+    // ============================================================
+    // 設定の読み書き（localStorage）
+    // ============================================================
+
+    /** 保存済み設定を読む。無ければ null を返す */
+    function loadSettings() {
+      try {
+        var raw = localStorage.getItem(SETTINGS_KEY);
+        if (!raw) { return null; }
+        var settings = JSON.parse(raw);
+        if (!settings || !settings.gasUrl) { return null; }
+        return settings;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    /** 設定を保存する */
+    function saveSettings(gasUrl, token) {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ gasUrl: gasUrl, token: token }));
+    }
+
+    // ============================================================
+    // 表示用キャッシュの読み書き（localStorage）
+    //   カテゴリ・記事一覧を「まずキャッシュで即描画→裏で最新化」するための置き場。
+    //   読み書きに失敗しても機能自体は GAS から直接取得できるため、例外は握りつぶす。
+    // ============================================================
+
+    /** キャッシュを読む。無い・壊れている場合は null を返す */
+    function loadCache(key) {
+      try {
+        var raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    /** キャッシュを保存する（容量超過等で失敗しても無視する） */
+    function saveCache(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch (e) {
+        console.warn('キャッシュの保存に失敗しました:', e);
+      }
+    }
+
+    /**
+     * カテゴリ・タグのキャッシュを state に反映する。
+     * キャッシュがあれば true（=即描画できる）、無ければ false を返す。
+     */
+    function primeCategoriesFromCache() {
+      var cached = loadCache(CATEGORIES_CACHE_KEY);
+      if (!cached || !Array.isArray(cached.categories) || !cached.categories.length) {
+        return false;
+      }
+      state.categories = cached.categories;
+      // tags は0件が正常な状態のため、無い場合のみ空配列（古い形式のキャッシュ対策）
+      state.tags = Array.isArray(cached.tags) ? cached.tags : [];
+      state.rootFolderUrl = cached.rootFolderUrl || state.rootFolderUrl;
+      return true;
+    }
+
+    /** 現在の state のカテゴリ・タグ一覧をキャッシュへ書き戻す */
+    function saveCategoriesCache() {
+      saveCache(CATEGORIES_CACHE_KEY, {
+        categories: state.categories,
+        tags: state.tags,
+        rootFolderUrl: state.rootFolderUrl
+      });
+    }
+
+    // ============================================================
+    // 画面の切り替え
+    // ============================================================
+
+    var VIEW_IDS = [
+      'mainView', 'settingsView', 'listCategoryView', 'listItemsView',
+      'doneView', 'errorView', 'editView'
+    ];
+
+    /** 指定したビューだけを表示し、他は隠す */
+    function showView(viewId) {
+      VIEW_IDS.forEach(function (id) {
+        document.getElementById(id).classList.toggle('hidden', id !== viewId);
+      });
+    }
+
+    /** HTMLエスケープ（一覧の記事タイトル・メモなど外部由来の文字列を表示する際に使う） */
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ============================================================
+    // GAS通信の共通ヘルパー
+    // ============================================================
+
+    /**
+     * GAS WebアプリへPOSTする。Content-Type を text/plain にすることで
+     * CORS のプリフライトを回避する（GAS Webアプリは OPTIONS に応答できないため）。
+     */
+    async function gasPost(bodyObj) {
+      var settings = loadSettings();
+      if (!settings) { throw new Error('設定が未保存です'); }
+      var response = await fetch(settings.gasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(Object.assign({ token: settings.token || '' }, bodyObj))
+      });
+      return response.json();
+    }
+
+    /** GAS WebアプリへGETする（一覧・カテゴリ取得用）。
+     * 記事一覧等は個人情報に近いため、GET側もPOSTと同じ合言葉で保護されている。 */
+    async function gasGet(action, extraParams) {
+      var settings = loadSettings();
+      if (!settings) { throw new Error('設定が未保存です'); }
+      var url = new URL(settings.gasUrl);
+      url.searchParams.set('action', action);
+      url.searchParams.set('token', settings.token || '');
+      Object.keys(extraParams || {}).forEach(function (key) {
+        url.searchParams.set(key, extraParams[key]);
+      });
+      var response = await fetch(url.toString());
+      return response.json();
+    }
+
+    /** カテゴリ一覧・タグ一覧・DriveフォルダURLをGASから取得し、state とキャッシュに反映する */
+    async function fetchCategories() {
+      var result = await gasGet('categories');
+      if (!result.ok) { throw new Error(result.error || 'カテゴリの取得に失敗しました'); }
+      state.categories = result.categories;
+      state.tags = result.tags || [];
+      state.rootFolderUrl = result.rootFolderUrl;
+      saveCategoriesCache();
+      return result;
+    }
+
+    /**
+     * カテゴリ表示の共通パターン（stale-while-revalidate）:
+     *   1. キャッシュがあれば即座に render() で描画する
+     *   2. 裏で GAS から最新を取得し、内容が変わっていれば描画し直す
+     *   3. キャッシュが無い初回だけは取得完了を待ち、失敗時は onError() を呼ぶ
+     * 取得に失敗してもキャッシュ表示済みなら画面はそのまま維持する。
+     */
+    async function renderCategoriesWithRevalidate(render, onError) {
+      var hasCache = primeCategoriesFromCache();
+      if (hasCache) { render(); }
+      try {
+        var before = JSON.stringify(state.categories);
+        await fetchCategories();
+        if (!hasCache || JSON.stringify(state.categories) !== before) {
+          render();
+        }
+      } catch (err) {
+        console.warn('カテゴリの最新化に失敗しました:', err);
+        if (!hasCache) { onError(err); }
+      }
+    }
+
+    // ============================================================
+    // カテゴリボタンの描画（保存画面・一覧画面で共用）
+    // ============================================================
+
+    /** カテゴリボタンをコンテナに描画する。タップ時に onSelect(category) を呼ぶ */
+    function renderCategoryButtons(containerId, categories, onSelect) {
+      var grid = document.getElementById(containerId);
+      grid.innerHTML = '';
+      if (!categories.length) {
+        grid.innerHTML = '<p class="empty-state">カテゴリがありません。設定画面から追加してください。</p>';
+        return;
+      }
+      categories.forEach(function (category) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'category-button';
+        button.textContent = category;
+        button.addEventListener('click', function () { onSelect(category); });
+        grid.appendChild(button);
+      });
+    }
+
+    // ============================================================
+    // 保存画面のカテゴリ選択・タグ選択（確定ボタンを押すまで送信しない）
+    // ============================================================
+
+    /** 保存画面のカテゴリボタンを描画する。選択中のカテゴリはハイライトする */
+    function renderMainCategoryButtons() {
+      var grid = document.getElementById('categoryGrid');
+      grid.innerHTML = '';
+      if (!state.categories.length) {
+        grid.innerHTML = '<p class="empty-state">カテゴリがありません。設定画面から追加してください。</p>';
+        return;
+      }
+      state.categories.forEach(function (category) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'category-button';
+        if (category === state.selectedCategory) { button.classList.add('category-button-selected'); }
+        button.textContent = category;
+        button.addEventListener('click', function () { selectMainCategory(category); });
+        grid.appendChild(button);
+      });
+    }
+
+    /** カテゴリを選択状態にする（この時点ではまだ保存しない） */
+    function selectMainCategory(category) {
+      state.selectedCategory = category;
+      renderMainCategoryButtons();
+      updateMainConfirmButtonState();
+    }
+
+    /** 保存画面のタグボタン（複数選択チップ）を描画する */
+    function renderMainTagButtons() {
+      var grid = document.getElementById('tagGrid');
+      grid.innerHTML = '';
+      if (!state.tags.length) {
+        grid.innerHTML = '<p class="empty-state">タグはまだありません。設定画面から追加できます</p>';
+        return;
+      }
+      state.tags.forEach(function (tag) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'tag-button';
+        var selected = state.selectedTags.indexOf(tag) !== -1;
+        if (selected) { button.classList.add('tag-button-selected'); }
+        button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        button.textContent = tag;
+        button.addEventListener('click', function () { toggleMainTag(tag); });
+        grid.appendChild(button);
+      });
+    }
+
+    /** タグの選択/選択解除を切り替える（複数選択可） */
+    function toggleMainTag(tag) {
+      var index = state.selectedTags.indexOf(tag);
+      if (index === -1) {
+        state.selectedTags.push(tag);
+      } else {
+        state.selectedTags.splice(index, 1);
+      }
+      renderMainTagButtons();
+    }
+
+    /** 確定ボタンの有効/無効を、カテゴリが選択されているかで切り替える */
+    function updateMainConfirmButtonState() {
+      document.getElementById('mainConfirmButton').disabled = !state.selectedCategory;
+    }
+
+    /** 保存画面の選択状態（カテゴリ・タグ）をリセットする（保存完了後・画面再表示時用） */
+    function resetMainSelection() {
+      state.selectedCategory = '';
+      state.selectedTags = [];
+      renderMainCategoryButtons();
+      renderMainTagButtons();
+      updateMainConfirmButtonState();
+    }
+
+    // ============================================================
+    // 保存処理（GAS WebアプリへPOST）
+    // ============================================================
+
+    /** 現在の保存対象URLを返す（共有パラメータ優先、無ければ手動入力欄） */
+    function getCurrentUrl() {
+      var shared = parseSharedParams(location.search);
+      if (shared.url) { return shared.url; }
+      return document.getElementById('manualUrlInput').value.trim();
+    }
+
+    /**
+     * 現在の保存対象メモを返す。
+     * メモ欄は共有・手動どちらの保存フローでも常に表示される1つの入力欄なので、
+     * その内容をそのまま使う（共有時は検出したテキストを初期値として入れてあるが、
+     * ユーザーが確定前に自由に編集できる）。
+     */
+    function getCurrentMemo() {
+      return document.getElementById('manualMemoInput').value.trim();
+    }
+
+    /** 現在選択中のタグ一覧を返す（複数選択・0件可） */
+    function getCurrentTags() {
+      return state.selectedTags.slice();
+    }
+
+    /** 送信失敗をユーザーに知らせる（オフライン・送信キュー投入失敗時） */
+    function showSendFailure() {
+      document.getElementById('errorDetail').textContent =
+        '保存できませんでした。通信環境を確認してください';
+      showView('errorView');
+    }
+
+    /**
+     * 確定ボタンが押されたときの保存処理（fire-and-forget 方式）。
+     *
+     * GAS側はタイトル取得〜インデックス追記の完了までに数秒かかるが、
+     * その応答を待たずに送信した時点で「保存しました」を表示する（体感1〜2秒）。
+     * fetch に keepalive: true を付けることで、表示直後にPWAを閉じても
+     * 送信自体はOS/ブラウザにより完了される。keepalive 非対応の環境では
+     * navigator.sendBeacon（同じく閉じても送信が保証される）へフォールバックする。
+     *
+     * トレードオフ: GASの応答を見ないため、サーバー側の処理エラーはこの画面では
+     * 検知できない（カテゴリ・タグはサーバー由来の一覧から選ぶため実質発生しない）。
+     * 検知するのは「送信そのものの失敗」（オフライン等）のみで、その場合は
+     * エラー画面を表示する。
+     */
+    function submitToGas(url, category, memo, tags) {
+      var settings = loadSettings();
+      if (!settings) {
+        document.getElementById('errorDetail').textContent =
+          '設定が未保存です。設定画面からやり直してください';
+        showView('errorView');
+        return;
+      }
+
+      // ステップ1: 明らかなオフラインは送信前に検知してエラー表示する
+      if (navigator.onLine === false) {
+        showSendFailure();
+        return;
+      }
+
+      var payload = JSON.stringify({
+        token: settings.token || '', action: 'save',
+        url: url, category: category, memo: memo, tags: tags || []
+      });
+
+      // ステップ2: keepalive付きfetch → sendBeacon → 通常fetch の順で送信を試みる
+      var queued = false;
+      if (typeof Request === 'function' && 'keepalive' in Request.prototype) {
+        try {
+          fetch(settings.gasUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: payload,
+            keepalive: true
+          }).catch(function (err) {
+            // ネットワーク到達前の失敗（オフライン等）はここで拒否される。
+            // アプリがまだ開いていればエラー表示に切り替えて知らせる。
+            console.error('保存リクエストの送信に失敗しました:', err);
+            showSendFailure();
+          });
+          queued = true;
+        } catch (fetchErr) {
+          console.warn('keepalive付きfetchが使えないため代替手段を試します:', fetchErr);
+        }
+      }
+      if (!queued && navigator.sendBeacon) {
+        // text/plain のBlobで送る（GAS側の doPost は postData.contents をJSONとして解釈する）
+        queued = navigator.sendBeacon(
+          settings.gasUrl,
+          new Blob([payload], { type: 'text/plain;charset=utf-8' })
+        );
+      }
+      if (!queued) {
+        showSendFailure();
+        return;
+      }
+
+      // ステップ3: 送信を受け付けた時点で完了表示（応答は待たない）
+      document.getElementById('doneDetail').textContent =
+        'カテゴリ「' + category + '」へ保存中です。この画面を閉じても保存されます';
+      showView('doneView');
+      // 自動でアプリを閉じるとユーザーが混乱するため、少し表示してからトップ画面（カテゴリ選択）に戻る。
+      // 明示的に終了したい場合はヘッダーの「終了」ボタンを使ってもらう。
+      // その前に送信失敗のエラー表示へ切り替わっていた場合は上書きしない。
+      setTimeout(function () {
+        if (!document.getElementById('doneView').classList.contains('hidden')) {
+          showView('mainView');
+          resetMainSelection();
+          document.getElementById('manualMemoInput').value = '';
+        }
+      }, 1200);
+    }
+
+    // ============================================================
+    // カテゴリ別一覧画面
+    // ============================================================
+
+    async function openListCategoryView() {
+      showView('listCategoryView');
+      await renderCategoriesWithRevalidate(
+        function () {
+          renderCategoryButtons('listCategoryGrid', state.categories, openListItemsView);
+        },
+        function (err) {
+          document.getElementById('listCategoryGrid').innerHTML =
+            '<p class="empty-state">カテゴリの取得に失敗しました: ' + escapeHtml(String(err.message || err)) + '</p>';
+        }
+      );
+    }
+
+    /**
+     * 記事一覧画面を開く（カテゴリ同様の stale-while-revalidate 方式）。
+     *   1. キャッシュ済みの先頭ページがあれば即描画する
+     *   2. 裏で GAS から最新の先頭ページを取得し、変化があれば描画し直す
+     * キャッシュするのは先頭ページ（最新50件）のみ。「さらに読み込む」で
+     * 取得した続きは表示中の state だけに持つ（次回開いたときは最新順に戻る）。
+     */
+    async function openListItemsView(category) {
+      document.getElementById('listItemsTitle').textContent = category + ' の記事一覧';
+      var container = document.getElementById('listItemsContainer');
+      showView('listItemsView');
+
+      state.listCategory = category;
+      var cacheMap = loadCache(LIST_CACHE_KEY) || {};
+      var cached = cacheMap[category];
+      var hasCache = !!(cached && Array.isArray(cached.items));
+      if (hasCache) {
+        renderListItems(cached.items, !!cached.hasMore);
+      } else {
+        container.innerHTML = '<p class="empty-state">読み込み中…</p>';
+      }
+
+      try {
+        var result = await gasGet('list', { category: category, offset: 0 });
+        if (!result.ok) { throw new Error(result.error || '取得に失敗しました'); }
+
+        // 別のカテゴリへ移動済みなら（連続タップ等）、古い応答で画面を上書きしない
+        if (state.listCategory !== category) { return; }
+
+        var fresh = { items: result.items, hasMore: !!result.hasMore };
+        var changed = !hasCache || JSON.stringify(cached) !== JSON.stringify(fresh);
+        cacheMap[category] = fresh;
+        saveCache(LIST_CACHE_KEY, cacheMap);
+        if (changed) { renderListItems(fresh.items, fresh.hasMore); }
+      } catch (err) {
+        console.error('一覧の取得に失敗しました:', err);
+        if (hasCache) { return; } // キャッシュ表示済みなら画面は維持する
+        container.innerHTML =
+          '<p class="empty-state">取得に失敗しました。GASの公開設定（アクセスできるユーザー: 全員）を確認してください。<br>' +
+          escapeHtml(String(err.message || err)) + '</p>';
+      }
+    }
+
+    /** 「さらに読み込む」: 表示済み件数を offset にして続きのページを取得・追記する */
+    async function loadMoreListItems() {
+      var category = state.listCategory;
+      var button = document.getElementById('loadMoreButton');
+      if (button) {
+        button.disabled = true;
+        button.textContent = '読み込み中…';
+      }
+      try {
+        var result = await gasGet('list', { category: category, offset: state.listItems.length });
+        if (!result.ok) { throw new Error(result.error || '取得に失敗しました'); }
+        if (state.listCategory !== category) { return; }
+        renderListItems(state.listItems.concat(result.items), !!result.hasMore);
+      } catch (err) {
+        console.error('続きの読み込みに失敗しました:', err);
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'さらに読み込む（通信エラー・再試行）';
+        }
+      }
+    }
+
+    /**
+     * 記事一覧を描画する。
+     * 外部由来のデータ（タイトル・URL・メモ）を扱うため、HTML文字列の結合ではなく
+     * DOM APIで組み立てる（文字列結合+escapeHtmlでは、URLに含まれる引用符による
+     * 属性からの抜け出し（XSS）を防ぎきれないため）。
+     */
+    function renderListItems(items, hasMore) {
+      var container = document.getElementById('listItemsContainer');
+      container.innerHTML = '';
+      state.listItems = items; // 「さらに読み込む」の offset 計算用に表示中の一覧を覚える
+
+      if (!items.length) {
+        var empty = document.createElement('p');
+        empty.className = 'empty-state';
+        empty.textContent = 'このカテゴリにはまだ保存された記事がありません';
+        container.appendChild(empty);
+        return;
+      }
+
+      items.forEach(function (item) {
+        // 記事1件は「記事リンク（a）＋編集ボタン」を横並びにした行（div）で構成する。
+        // 記事本体はタップで開けるリンクのまま維持し（スマホ操作性の非劣化）、右端に編集ボタンを添える。
+        var row = document.createElement('div');
+        row.className = 'list-item-row';
+
+        var link = document.createElement('a');
+        link.className = 'list-item';
+        // http/https 以外（シートを手で編集した場合等）はリンクにしない防御
+        if (/^https?:\/\//i.test(item.url)) {
+          link.href = item.url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+        }
+
+        var date = document.createElement('div');
+        date.className = 'list-item-date';
+        date.textContent = item.savedAt;
+        link.appendChild(date);
+
+        var title = document.createElement('div');
+        title.className = 'list-item-title';
+        title.textContent = item.title;
+        link.appendChild(title);
+
+        if (item.memo) {
+          var memo = document.createElement('div');
+          memo.className = 'list-item-memo';
+          memo.textContent = item.memo;
+          link.appendChild(memo);
+        }
+
+        row.appendChild(link);
+
+        // fileId のある記事（Docが特定できる記事）だけ編集可能にする。
+        // 旧データでDriveファイル列が空の行は fileId が無いため編集ボタンを出さない。
+        if (item.fileId) {
+          var editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.className = 'list-item-edit';
+          editBtn.textContent = '編集';
+          editBtn.addEventListener('click', function () { openEditView(item); });
+          row.appendChild(editBtn);
+        }
+
+        container.appendChild(row);
+      });
+
+      // まだ続きがある場合は末尾に「さらに読み込む」ボタンを出す
+      if (hasMore) {
+        var moreButton = document.createElement('button');
+        moreButton.type = 'button';
+        moreButton.id = 'loadMoreButton';
+        moreButton.className = 'load-more-button';
+        moreButton.textContent = 'さらに読み込む';
+        moreButton.addEventListener('click', loadMoreListItems);
+        container.appendChild(moreButton);
+      }
+    }
+
+    // ============================================================
+    // 記事の編集（一覧の「編集」ボタンから開く）
+    // ============================================================
+
+    /** 編集ビューを開き、対象記事の内容を入力欄へセットする */
+    function openEditView(item) {
+      state.editingItem = item;
+      document.getElementById('editTitleInput').value = item.title || '';
+      document.getElementById('editUrlInput').value = item.url || '';
+      document.getElementById('editMemoInput').value = item.memo || '';
+      showView('editView');
+    }
+
+    /** 指定カテゴリの記事一覧キャッシュを破棄する（編集で内容が変わったとき用） */
+    function invalidateListCache(category) {
+      var cacheMap = loadCache(LIST_CACHE_KEY) || {};
+      if (cacheMap[category]) {
+        delete cacheMap[category];
+        saveCache(LIST_CACHE_KEY, cacheMap);
+      }
+    }
+
+    /**
+     * 編集内容をGASへ送信して保存する。
+     * 保存は fire-and-forget にせず応答を待つ（結果を確認して一覧へ反映するため）。
+     * 成功したら該当カテゴリのキャッシュを破棄し、一覧を取り直して戻る。
+     */
+    async function submitEdit() {
+      var item = state.editingItem;
+      if (!item || !item.fileId) {
+        alert('編集対象が不明です。一覧からやり直してください。');
+        return;
+      }
+
+      var title = document.getElementById('editTitleInput').value.trim();
+      var url = document.getElementById('editUrlInput').value.trim();
+      var memo = document.getElementById('editMemoInput').value.trim();
+
+      if (!title) { alert('タイトルを入力してください。'); return; }
+      if (!/^https?:\/\/\S+$/i.test(url)) {
+        alert('URLは https:// または http:// で始まる形式で入力してください。');
+        return;
+      }
+
+      var button = document.getElementById('editSaveButton');
+      button.disabled = true;
+      button.textContent = '更新中…';
+      try {
+        var result = await gasPost({
+          action: 'update', fileId: item.fileId, title: title, url: url, memo: memo
+        });
+        if (!result.ok) { throw new Error(result.error || '更新に失敗しました'); }
+
+        // 編集したカテゴリの一覧キャッシュは古くなるので破棄し、最新を取り直して戻る
+        var category = state.listCategory;
+        invalidateListCache(category);
+        await openListItemsView(category);
+      } catch (err) {
+        console.error('記事の更新に失敗しました:', err);
+        alert('更新に失敗しました: ' + String(err.message || err));
+      } finally {
+        button.disabled = false;
+        button.textContent = '更新する';
+      }
+    }
+
+    // ============================================================
+    // カテゴリ管理（設定画面内）
+    // ============================================================
+
+    function renderCategoryManageList() {
+      var container = document.getElementById('categoryManageList');
+      container.innerHTML = '';
+      state.categories.forEach(function (name, index) {
+        var row = document.createElement('div');
+        row.className = 'category-manage-row';
+
+        var label = document.createElement('span');
+        label.className = 'category-name';
+        label.textContent = name;
+
+        var buttons = document.createElement('div');
+        buttons.className = 'category-row-buttons';
+
+        // ↑/↓ボタンで並び順を変更する（スマホ前提のため、ドラッグ&ドロップより
+        // 誤操作が少なく確実なボタン方式を採用）。端の要素は該当方向を無効化する。
+        var upBtn = document.createElement('button');
+        upBtn.type = 'button';
+        upBtn.className = 'category-move-button';
+        upBtn.textContent = '↑';
+        upBtn.setAttribute('aria-label', name + ' を上へ');
+        upBtn.disabled = (index === 0);
+        upBtn.addEventListener('click', function () { handleMoveCategory(index, -1); });
+
+        var downBtn = document.createElement('button');
+        downBtn.type = 'button';
+        downBtn.className = 'category-move-button';
+        downBtn.textContent = '↓';
+        downBtn.setAttribute('aria-label', name + ' を下へ');
+        downBtn.disabled = (index === state.categories.length - 1);
+        downBtn.addEventListener('click', function () { handleMoveCategory(index, 1); });
+
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'category-remove-button';
+        removeBtn.textContent = '削除';
+        removeBtn.addEventListener('click', function () { handleRemoveCategory(name); });
+
+        buttons.appendChild(upBtn);
+        buttons.appendChild(downBtn);
+        buttons.appendChild(removeBtn);
+        row.appendChild(label);
+        row.appendChild(buttons);
+        container.appendChild(row);
+      });
+    }
+
+    /**
+     * カテゴリを1つ上/下へ移動する。
+     * 画面は先に並び替えて即反映（楽観更新）し、GASへの保存に失敗したら元に戻す。
+     * 連打による並び順の競合を避けるため、保存中は次の移動を受け付けない。
+     */
+    var reorderInFlight = false;
+    async function handleMoveCategory(index, delta) {
+      if (reorderInFlight) { return; }
+      var previous = state.categories;
+      var next = moveArrayItem(previous, index, delta);
+      if (JSON.stringify(next) === JSON.stringify(previous)) { return; }
+
+      reorderInFlight = true;
+      state.categories = next;
+      renderCategoryManageList();
+      try {
+        var result = await gasPost({ action: 'reorderCategories', categories: next });
+        if (!result.ok) { throw new Error(result.error || '並び替えに失敗しました'); }
+        state.categories = result.categories;
+        saveCategoriesCache(); // 全画面のカテゴリ表示（キャッシュ）にも新しい順序を反映
+        renderCategoryManageList();
+      } catch (err) {
+        state.categories = previous;
+        renderCategoryManageList();
+        alert('並び替えの保存に失敗しました: ' + String(err.message || err));
+      } finally {
+        reorderInFlight = false;
+      }
+    }
+
+    async function refreshManageUi() {
+      document.getElementById('categoryManageSection').classList.remove('hidden');
+      document.getElementById('tagManageSection').classList.remove('hidden');
+      await renderCategoriesWithRevalidate(
+        function () { renderCategoryManageList(); renderTagManageList(); },
+        function (err) {
+          console.warn('カテゴリ・タグ管理用の一覧取得に失敗:', err);
+        }
+      );
+    }
+
+    async function handleAddCategory() {
+      var input = document.getElementById('newCategoryInput');
+      var name = input.value.trim();
+      if (!name) { return; }
+      try {
+        var result = await gasPost({ action: 'addCategory', name: name });
+        if (!result.ok) { throw new Error(result.error || '追加に失敗しました'); }
+        state.categories = result.categories;
+        saveCategoriesCache();
+        input.value = '';
+        renderCategoryManageList();
+      } catch (err) {
+        alert('カテゴリの追加に失敗しました: ' + String(err.message || err));
+      }
+    }
+
+    async function handleRemoveCategory(name) {
+      if (!confirm('「' + name + '」を削除しますか？（Driveに保存済みの記事は残ります）')) { return; }
+      try {
+        var result = await gasPost({ action: 'removeCategory', name: name });
+        if (!result.ok) { throw new Error(result.error || '削除に失敗しました'); }
+        state.categories = result.categories;
+        saveCategoriesCache();
+        renderCategoryManageList();
+      } catch (err) {
+        alert('カテゴリの削除に失敗しました: ' + String(err.message || err));
+      }
+    }
+
+    // ============================================================
+    // タグ管理（設定画面内。カテゴリ管理と同じ方式）
+    // ============================================================
+
+    function renderTagManageList() {
+      var container = document.getElementById('tagManageList');
+      container.innerHTML = '';
+      state.tags.forEach(function (name, index) {
+        var row = document.createElement('div');
+        row.className = 'category-manage-row';
+
+        var label = document.createElement('span');
+        label.className = 'category-name';
+        label.textContent = name;
+
+        var buttons = document.createElement('div');
+        buttons.className = 'category-row-buttons';
+
+        var upBtn = document.createElement('button');
+        upBtn.type = 'button';
+        upBtn.className = 'category-move-button';
+        upBtn.textContent = '↑';
+        upBtn.setAttribute('aria-label', name + ' を上へ');
+        upBtn.disabled = (index === 0);
+        upBtn.addEventListener('click', function () { handleMoveTag(index, -1); });
+
+        var downBtn = document.createElement('button');
+        downBtn.type = 'button';
+        downBtn.className = 'category-move-button';
+        downBtn.textContent = '↓';
+        downBtn.setAttribute('aria-label', name + ' を下へ');
+        downBtn.disabled = (index === state.tags.length - 1);
+        downBtn.addEventListener('click', function () { handleMoveTag(index, 1); });
+
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'category-remove-button';
+        removeBtn.textContent = '削除';
+        removeBtn.addEventListener('click', function () { handleRemoveTag(name); });
+
+        buttons.appendChild(upBtn);
+        buttons.appendChild(downBtn);
+        buttons.appendChild(removeBtn);
+        row.appendChild(label);
+        row.appendChild(buttons);
+        container.appendChild(row);
+      });
+    }
+
+    /** タグを1つ上/下へ移動する（カテゴリのhandleMoveCategoryと同じ方式） */
+    var tagReorderInFlight = false;
+    async function handleMoveTag(index, delta) {
+      if (tagReorderInFlight) { return; }
+      var previous = state.tags;
+      var next = moveArrayItem(previous, index, delta);
+      if (JSON.stringify(next) === JSON.stringify(previous)) { return; }
+
+      tagReorderInFlight = true;
+      state.tags = next;
+      renderTagManageList();
+      try {
+        var result = await gasPost({ action: 'reorderTags', tags: next });
+        if (!result.ok) { throw new Error(result.error || '並び替えに失敗しました'); }
+        state.tags = result.tags;
+        saveCategoriesCache();
+        renderTagManageList();
+      } catch (err) {
+        state.tags = previous;
+        renderTagManageList();
+        alert('並び替えの保存に失敗しました: ' + String(err.message || err));
+      } finally {
+        tagReorderInFlight = false;
+      }
+    }
+
+    async function handleAddTag() {
+      var input = document.getElementById('newTagInput');
+      var name = input.value.trim();
+      if (!name) { return; }
+      try {
+        var result = await gasPost({ action: 'addTag', name: name });
+        if (!result.ok) { throw new Error(result.error || '追加に失敗しました'); }
+        state.tags = result.tags;
+        saveCategoriesCache();
+        input.value = '';
+        renderTagManageList();
+      } catch (err) {
+        alert('タグの追加に失敗しました: ' + String(err.message || err));
+      }
+    }
+
+    async function handleRemoveTag(name) {
+      if (!confirm('「' + name + '」を削除しますか？（保存済み記事のタグは変わりません）')) { return; }
+      try {
+        var result = await gasPost({ action: 'removeTag', name: name });
+        if (!result.ok) { throw new Error(result.error || '削除に失敗しました'); }
+        state.tags = result.tags;
+        saveCategoriesCache();
+        renderTagManageList();
+      } catch (err) {
+        alert('タグの削除に失敗しました: ' + String(err.message || err));
+      }
+    }
+
+    // ============================================================
+    // 初期化
+    // ============================================================
+
+    function wireStaticEventListeners() {
+      // 設定ボタン: 現在の保存値を入力欄に反映してから設定画面へ
+      document.getElementById('settingsButton').addEventListener('click', function () {
+        var current = loadSettings() || { gasUrl: '', token: '' };
+        document.getElementById('gasUrlInput').value = current.gasUrl;
+        document.getElementById('tokenInput').value = current.token || '';
+        showView('settingsView');
+        if (current.gasUrl) { refreshManageUi(); }
+      });
+
+      document.getElementById('saveSettingsButton').addEventListener('click', async function () {
+        var gasUrl = document.getElementById('gasUrlInput').value.trim();
+        var token = document.getElementById('tokenInput').value.trim();
+        if (!/^https:\/\/script\.google\.com\/.+/.test(gasUrl)) {
+          alert('GAS WebアプリのURL（https://script.google.com/…）を入力してください');
+          return;
+        }
+        saveSettings(gasUrl, token);
+        await initMainView();
+        showView('mainView');
+      });
+
+      document.getElementById('addCategoryButton').addEventListener('click', handleAddCategory);
+      document.getElementById('addTagButton').addEventListener('click', handleAddTag);
+
+      // 保存画面の確定ボタン（カテゴリタップでは保存せず、ここで保存を実行する）
+      document.getElementById('mainConfirmButton').addEventListener('click', handleMainConfirm);
+
+      // 一覧ボタン・戻るボタン
+      document.getElementById('listButton').addEventListener('click', openListCategoryView);
+      document.getElementById('listCategoryBackButton').addEventListener('click', function () {
+        showView('mainView');
+      });
+      document.getElementById('listItemsBackButton').addEventListener('click', openListCategoryView);
+
+      // 記事編集ビュー: 更新ボタン・戻るボタン
+      document.getElementById('editSaveButton').addEventListener('click', submitEdit);
+      document.getElementById('editBackButton').addEventListener('click', function () {
+        // 編集をやめて一覧へ戻る（キャッシュ済みの一覧をそのまま表示）
+        openListItemsView(state.listCategory);
+      });
+
+      // Driveショートカット（ナレッジフォルダを新規タブで開く）
+      document.getElementById('driveShortcutButton').addEventListener('click', async function () {
+        if (!loadSettings()) {
+          alert('先に設定画面でGAS WebアプリのURLを保存してください。');
+          showView('settingsView');
+          return;
+        }
+        try {
+          if (!state.rootFolderUrl) { await fetchCategories(); }
+          window.open(state.rootFolderUrl, '_blank', 'noopener');
+        } catch (err) {
+          alert('Driveフォルダの取得に失敗しました: ' + String(err.message || err));
+        }
+      });
+
+      // エラー画面からの復帰
+      document.getElementById('retryButton').addEventListener('click', function () {
+        showView('mainView');
+      });
+
+      // 終了ボタン: アプリを明示的に閉じる。
+      // window.close() は「スクリプトで開いたウィンドウ」以外では効かないブラウザがあるため、
+      // 少し待っても画面が残っている（＝閉じられなかった）場合は手動で閉じるよう案内する。
+      document.getElementById('exitButton').addEventListener('click', function () {
+        window.close();
+        setTimeout(function () {
+          alert('この画面を自動では閉じられませんでした。お手数ですが手動で閉じてください。');
+        }, 300);
+      });
+    }
+
+    /**
+     * 保存画面（メイン画面）のカテゴリ・タグボタンを描画する。
+     * 前回取得したキャッシュがあれば即座に描画し（起動直後から保存操作できる）、
+     * 裏でGASから最新一覧を取得して変化があれば描き直す。
+     * カテゴリタップでは保存せず、確定ボタン（mainConfirmButton）で保存する。
+     */
+    async function initMainView() {
+      var renderGrid = function () {
+        renderMainCategoryButtons();
+        renderMainTagButtons();
+      };
+      await renderCategoriesWithRevalidate(renderGrid, function (err) {
+        document.getElementById('categoryGrid').innerHTML =
+          '<p class="empty-state">カテゴリの取得に失敗しました: ' + escapeHtml(String(err.message || err)) + '</p>';
+      });
+    }
+
+    /** 確定ボタン押下時のハンドラ。URL・カテゴリを検証してから保存を実行する */
+    function handleMainConfirm() {
+      var url = getCurrentUrl();
+      if (!url) {
+        alert('URLがありません。共有シートから開くか、URLを入力してください。');
+        return;
+      }
+      // URLの簡易検証（PCの手入力で https:// を付け忘れるケースの早期案内）
+      if (!/^https?:\/\/\S+$/i.test(url)) {
+        alert('URLは https:// または http:// で始まる形式で入力してください。');
+        return;
+      }
+      if (!state.selectedCategory) {
+        alert('カテゴリを選択してください。');
+        return;
+      }
+      submitToGas(url, state.selectedCategory, getCurrentMemo(), getCurrentTags());
+    }
+
+    async function init() {
+      var shared = parseSharedParams(location.search);
+      var settings = loadSettings();
+
+      wireStaticEventListeners();
+
+      // 共有されたURLの表示（無ければ手動入力欄を出す＝PCブラウザからの新規保存に対応）
+      if (shared.url) {
+        document.getElementById('sharedUrlText').textContent = shared.url;
+      } else {
+        document.getElementById('sharedUrlText').textContent =
+          '共有シートから開くか、下の欄にURLを入力して保存できます';
+        document.getElementById('manualInputArea').classList.remove('hidden');
+      }
+
+      // 共有テキストから検出したタイトルらしき文字列があれば表示（保存前の識別用）。
+      // 同じ内容をメモ欄の初期値にも入れる（そのまま登録することも、編集することもできる）。
+      if (shared.memo) {
+        document.getElementById('titleHintText').textContent = shared.memo;
+        document.getElementById('titleHintRow').classList.remove('hidden');
+        document.getElementById('manualMemoInput').value = shared.memo;
+      }
+
+      if (settings) {
+        showView('mainView');
+        await initMainView();
+      } else {
+        showView('settingsView');
+      }
+
+      // サービスワーカー登録（PWAインストール要件）
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(function (err) {
+          console.warn('サービスワーカーの登録に失敗:', err);
+        });
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
