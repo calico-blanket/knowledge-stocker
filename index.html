@@ -274,6 +274,25 @@
     .list-item-date { font-size: 12px; color: #8a90a0; margin-bottom: 4px; }
     .list-item-title { font-size: 15px; font-weight: 600; color: #3949ab; line-height: 1.4; }
     .list-item-memo { font-size: 13px; color: #5a6070; margin-top: 4px; }
+    /* 一覧のタグバッジ: 表示専用（操作不可）のため、カテゴリボタン(52px)・
+       保存フォームのtag-button(44px/14px、選択操作用)より一段小さい階層とする */
+    .item-tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .item-tag-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 11px;
+      background: #e8eaf6;
+      color: #3949ab;
+      font-size: 12px;
+      line-height: 1.4;
+    }
     .empty-state { font-size: 14px; color: #8a90a0; text-align: center; padding: 32px 0; }
 
     /* 送信中・完了・エラーの状態表示 */
@@ -1070,6 +1089,18 @@
           memo.className = 'list-item-memo';
           memo.textContent = item.memo;
           link.appendChild(memo);
+        }
+
+        if (item.tags && item.tags.length) {
+          var tagList = document.createElement('div');
+          tagList.className = 'item-tag-list';
+          item.tags.forEach(function (tag) {
+            var tagBadge = document.createElement('span');
+            tagBadge.className = 'item-tag-badge';
+            tagBadge.textContent = tag;
+            tagList.appendChild(tagBadge);
+          });
+          link.appendChild(tagList);
         }
 
         row.appendChild(link);

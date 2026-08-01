@@ -139,6 +139,22 @@ test('XSS対策: 一覧描画がHTML文字列結合ではなくDOM APIで組み�
   assert.match(m[1], /\^https\?:/, 'hrefに設定する前にURLスキームを検証していること');
 });
 
+test('タグバッジ: renderListItemsがitem.tagsをDOM APIでバッジ表示する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const m = html.match(/function renderListItems\(items, hasMore\) \{([\s\S]*?)\n    \}/);
+  assert.ok(m, 'renderListItems関数が存在すること');
+  assert.match(m[1], /if \(item\.tags && item\.tags\.length\)/, 'タグ0件では領域自体を出さないこと');
+  assert.match(m[1], /createElement\('span'\)/, 'タグバッジをDOM APIで生成すること');
+  assert.match(m[1], /item-tag-badge/, '一覧専用の新規CSSクラスを使うこと');
+  assert.match(m[1], /tagBadge\.textContent = tag/, 'タグ文字列をtextContentで設定していること（HTML文字列結合でないこと）');
+});
+
+test('タグバッジ: 一覧専用の新規CSSクラスが設定画面のカテゴリ管理UIと分離されている', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(html, /\.item-tag-badge\s*\{/, '.item-tag-badge のCSS定義が存在すること');
+  assert.match(html, /\.item-tag-list\s*\{/, '.item-tag-list のCSS定義が存在すること');
+});
+
 test('GET保護: gasGetがtokenパラメータを付与している', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const m = html.match(/async function gasGet\(action, extraParams\) \{([\s\S]*?)\n    \}/);
