@@ -71,14 +71,16 @@
       margin-bottom: 10px;
     }
 
-    /* カテゴリボタン: 2列グリッド、高さ64px以上、押し間違い防止の間隔 */
+    /* カテゴリボタン: 2列グリッド、高さ52px以上、押し間違い防止の間隔
+       タグ選択チップ(.tag-button: 44px/14px)より一段大きい階層を維持するため
+       テキストサイズ(15px)は変えず、枠の高さ・幅(gap)のみ縮小する */
     .category-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      gap: 8px;
     }
     .category-button {
-      min-height: 64px;
+      min-height: 52px;
       border: none;
       border-radius: 12px;
       background: #fff;
@@ -87,7 +89,7 @@
       font-weight: 600;
       color: #2f3650;
       cursor: pointer;
-      padding: 8px;
+      padding: 6px 10px;
       line-height: 1.3;
       -webkit-tap-highlight-color: rgba(57, 73, 171, 0.2);
     }
