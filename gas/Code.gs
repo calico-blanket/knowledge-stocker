@@ -182,7 +182,7 @@ function splitTagsText_(tagsText) {
  *   - addCategory      : { name } をカテゴリ一覧に追加
  *   - removeCategory   : { name } をカテゴリ一覧から削除（保存済みデータは残す）
  *   - reorderCategories: { categories } の順にカテゴリの並び順を変更
- *   - update           : { fileId, title, url, memo? } 保存済み記事の内容を編集
+ *   - update           : { id?, fileId?, title, url, memo?, tags? } 保存済み記事の内容を編集
  *   - addTag           : { name } をタグ一覧に追加
  *   - removeTag        : { name } をタグ一覧から削除（保存済みデータは残す）
  *   - reorderTags      : { tags } の順にタグの並び順を変更
@@ -941,7 +941,7 @@ function extractFileIdFromFormula_(formula) {
 // ---- 保存済み記事の編集（action=update） ----------------------
 
 /**
- * 保存済み記事の内容（タイトル・URL・メモ）を編集する(action=update)。
+ * 保存済み記事の内容（タイトル・URL・メモ・タグ）を編集する(action=update)。
  * 行の特定キーは id（ID列のUUID）優先・fileId（GoogleドキュメントのID）フォールバック:
  *   - id指定時: ID列の一致行のSheetsのみ更新する（DocumentApp操作はスキップ。
  *     新規保存の記事はDocを持たないため）。ID重複時は先頭（最古）の一致行を採用する
@@ -951,7 +951,9 @@ function extractFileIdFromFormula_(formula) {
  * 自分のDrive上の無関係なファイルを触られないよう、一覧に存在する行だけを対象にする）。
  * 保存日時とカテゴリは編集対象外で、Doc再構築時はSheets行の値をそのまま引き継ぐ。
  * ドキュメントの「本文（自動抽出・参考）」節と「共有時のURL」行は保持する。
- * （tagsフィールドの扱いはPhase4で対応するため、ここでは触れない）
+ * tags: body.tags が配列で指定された場合のみタグ列を置き換える（validateSaveParams_と
+ * 同じ方針で、現在のタグ一覧に完全一致するタグのみ許可。未登録タグはエラー）。
+ * 未指定（配列でない）の場合はタグ列を変更せず現状を保持する。空配列を指定すると全クリアする。
  */
 function handleUpdate_(body) {
   // ステップ1: 入力検証（save と同じ方針: http/https のみ、タイトル必須）
@@ -960,6 +962,8 @@ function handleUpdate_(body) {
   var title = String(body.title || '').trim();
   var url = String(body.url || '').trim();
   var memo = String(body.memo || '').trim();
+  var tagsSpecified = Object.prototype.toString.call(body.tags) === '[object Array]';
+  var tags = tagsSpecified ? normalizeTagsInput_(body.tags) : null;
 
   if (!id && !fileId) {
     throw new Error('編集対象が指定されていません');
@@ -969,6 +973,14 @@ function handleUpdate_(body) {
   }
   if (!/^https?:\/\/\S+$/i.test(url)) {
     throw new Error('URLの形式が不正です: ' + url);
+  }
+  if (tagsSpecified) {
+    var knownTags = getTags_();
+    tags.forEach(function (tag) {
+      if (knownTags.indexOf(tag) === -1) {
+        throw new Error('不明なタグです: ' + tag);
+      }
+    });
   }
 
   // ステップ2: Sheetsインデックスから対象行を特定する（id優先・fileIdフォールバック）
@@ -1004,6 +1016,10 @@ function handleUpdate_(body) {
   sheet.getRange(targetRow, INDEX_COL.TITLE).setFormula(
     '=HYPERLINK("' + escapeFormulaString_(url) + '","' + escapeFormulaString_(title) + '")'
   );
+  // tags未指定（配列でない）の場合はタグ列に触れず現状を保持する
+  if (tagsSpecified) {
+    sheet.getRange(targetRow, INDEX_COL.TAGS).setValue(sanitizeCellText_(tags.join(', ')));
+  }
 
   // ステップ4: fileId指定の旧データのみ、Googleドキュメント本文も更新する
   // （自動抽出本文・共有時URLは保持。id指定の記事はDocを持たないためスキップする）
@@ -1015,7 +1031,7 @@ function handleUpdate_(body) {
     doc.saveAndClose();
   }
 
-  return { ok: true, id: id, fileId: fileId, title: title, url: url, memo: memo };
+  return { ok: true, id: id, fileId: fileId, title: title, url: url, memo: memo, tags: tagsSpecified ? tags : null };
 }
 
 /**
