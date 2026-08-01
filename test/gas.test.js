@@ -499,6 +499,39 @@ test('一覧API: 指定カテゴリの保存済み記事のみを新しい順に
   assert.strictEqual(result.items[1].url, 'https://example.com/pc1');
 });
 
+test('一覧API: タグ無し記事は items[].tags が空配列', () => {
+  const { context } = loadGasScript();
+  callDoPost(context, { url: 'https://example.com/no-tag', category: 'PC系' });
+
+  const result = callDoGetList(context, 'PC系');
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(Array.from(result.items[0].tags), []);
+});
+
+test('一覧API: タグ1件の記事は items[].tags にそのタグが1件入る', () => {
+  const { context } = loadGasScript();
+  callDoPost(context, { action: 'addTag', name: 'サンプルタグ' });
+  callDoPost(context, { url: 'https://example.com/one-tag', category: 'PC系', tags: ['サンプルタグ'] });
+
+  const result = callDoGetList(context, 'PC系');
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(Array.from(result.items[0].tags), ['サンプルタグ']);
+});
+
+test('一覧API: タグ複数件の記事は items[].tags に保存順で全件入る', () => {
+  const { context } = loadGasScript();
+  callDoPost(context, { action: 'addTag', name: 'タグ1' });
+  callDoPost(context, { action: 'addTag', name: 'タグ2' });
+  callDoPost(context, { action: 'addTag', name: 'タグ3' });
+  callDoPost(context, {
+    url: 'https://example.com/multi-tag', category: 'PC系', tags: ['タグ1', 'タグ2', 'タグ3']
+  });
+
+  const result = callDoGetList(context, 'PC系');
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(Array.from(result.items[0].tags), ['タグ1', 'タグ2', 'タグ3']);
+});
+
 test('一覧API: まだ何も保存されていないカテゴリは空配列を返す（エラーにしない）', () => {
   const { context } = loadGasScript();
   const result = callDoGetList(context, 'DTP系');
@@ -1339,7 +1372,8 @@ test('Code.gs: 主要関数の定義がそれぞれちょうど1つである（�
     'appendIndexRow_', 'doGet', 'doPost', 'handleUpdate_', 'extractFileIdFromFormula_',
     'rebuildDocContent_', 'extractDocOriginalUrl_', 'extractDocBodyText_',
     'getTags_', 'saveTags_', 'sanitizeTagName_', 'normalizeTagsInput_',
-    'handleAddTag_', 'handleRemoveTag_', 'handleReorderTags_', 'fetchPageTitle_'
+    'handleAddTag_', 'handleRemoveTag_', 'handleReorderTags_', 'fetchPageTitle_',
+    'splitTagsText_'
   ];
   for (const fn of names) {
     const definitions = source.match(new RegExp('function ' + fn + '\\(', 'g')) || [];

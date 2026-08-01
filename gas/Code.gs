@@ -151,6 +151,7 @@ function handleList_(category, token, offsetParam) {
         title: row[INDEX_COL.TITLE - 1],
         url: row[INDEX_COL.URL - 1],
         memo: row[INDEX_COL.MEMO - 1] || '',
+        tags: splitTagsText_(row[INDEX_COL.TAGS - 1]),
         fileId: extractFileIdFromFormula_(fileFormula)
       });
     }
@@ -161,6 +162,12 @@ function handleList_(category, token, offsetParam) {
   } catch (err) {
     return jsonResponse_({ ok: false, error: String((err && err.message) || err) });
   }
+}
+
+/** インデックスシートのタグ列（", " 区切り文字列）を、前後空白除去済みの配列に戻す */
+function splitTagsText_(tagsText) {
+  if (!tagsText) { return []; }
+  return String(tagsText).split(',').map(function (t) { return t.trim(); }).filter(function (t) { return t; });
 }
 
 /**
