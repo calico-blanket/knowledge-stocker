@@ -293,11 +293,14 @@ test('編集UI: 編集ビューと入力欄に必要なDOM idが揃っている'
   assert.match(html, /VIEW_IDS = \[[\s\S]*?'editView'[\s\S]*?\]/);
 });
 
-test('編集UI: 一覧の各記事にfileIdがあれば編集ボタンを生成する', () => {
+test('編集UI: 一覧の各記事にidまたはfileIdがあれば編集ボタンを生成する', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const m = html.match(/function renderListItems\(items, hasMore\) \{([\s\S]*?)\n    \}/);
   assert.ok(m, 'renderListItems関数が存在すること');
-  assert.match(m[1], /if \(item\.fileId\)/, 'fileIdがある記事だけ編集可能にすること');
+  assert.match(
+    m[1], /if \(item\.id \|\| item\.fileId\)/,
+    'id（新規記事）または fileId（旧データ）で特定できる記事を編集可能にすること'
+  );
   assert.match(m[1], /openEditView\(item\)/, '編集ボタンで編集ビューを開くこと');
   assert.match(m[1], /createElement\('button'\)/, '編集ボタンをDOM APIで生成すること');
 });
@@ -307,7 +310,8 @@ test('編集UI: submitEditがupdateアクションをGASへ送り、成功後に
   const m = html.match(/async function submitEdit\(\) \{([\s\S]*?)\n    \}/);
   assert.ok(m, 'submitEdit関数が存在すること');
   assert.match(m[1], /action: 'update'/, 'updateアクションを送ること');
-  assert.match(m[1], /fileId: item\.fileId/, 'fileIdをキーに送ること');
+  assert.match(m[1], /id: item\.id/, 'idを優先キーとして送ること');
+  assert.match(m[1], /fileId: item\.fileId/, 'fileIdをフォールバックキーとして送ること');
   assert.match(m[1], /\^https\?:/, 'URL形式を検証すること');
   assert.match(m[1], /invalidateListCache/, '編集後にキャッシュを破棄すること');
   assert.match(m[1], /await openListItemsView/, '編集後に一覧を取り直すこと');

