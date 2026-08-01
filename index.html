@@ -344,6 +344,21 @@
       min-height: 44px;
     }
     .list-item-edit:active { background: #e8eaf6; }
+    /* 削除ボタン: 誤タップ防止のため編集ボタンより弱い色（グレー系）にする */
+    .list-item-delete {
+      flex: 0 0 auto;
+      align-self: center;
+      border: 1px solid #bdbdbd;
+      color: #757575;
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 44px;
+    }
+    .list-item-delete:active { background: #f0f0f0; }
 
     /* ============================================================
        レスポンシブ対応（PCブラウザ幅）
@@ -1120,6 +1135,16 @@
           row.appendChild(editBtn);
         }
 
+        // 削除は id のみで特定するため、idが無い記事（旧キャッシュ由来）には出さない。
+        if (item.id) {
+          var deleteBtn = document.createElement('button');
+          deleteBtn.type = 'button';
+          deleteBtn.className = 'list-item-delete';
+          deleteBtn.textContent = '削除';
+          deleteBtn.addEventListener('click', function () { handleDeleteClick(item, row); });
+          row.appendChild(deleteBtn);
+        }
+
         container.appendChild(row);
       });
 
@@ -1188,6 +1213,41 @@
       if (cacheMap[category]) {
         delete cacheMap[category];
         saveCache(LIST_CACHE_KEY, cacheMap);
+      }
+    }
+
+    /**
+     * 指定カテゴリのキャッシュ済み一覧から、指定idの記事を1件取り除いて書き戻す
+     * （削除成功時、再取得せずにキャッシュを最新化するため）。
+     * キャッシュが無い場合は何もしない（次回表示時にGASから取り直される）。
+     */
+    function removeItemFromListCache(category, id) {
+      var cacheMap = loadCache(LIST_CACHE_KEY) || {};
+      var cached = cacheMap[category];
+      if (!cached || !Array.isArray(cached.items)) { return; }
+      cached.items = cached.items.filter(function (it) { return it.id !== id; });
+      saveCache(LIST_CACHE_KEY, cacheMap);
+    }
+
+    /**
+     * 一覧の「削除」ボタン押下時のハンドラ。
+     * 削除は不可逆（Sheetsの行をdeleteRowで物理削除）なため、confirm()で1段階確認する。
+     * 成功したらDOM上の行要素をその場で除去し、キャッシュからも該当記事を取り除く
+     * （一覧を再取得しない。他の記事の表示位置を保つため）。
+     */
+    async function handleDeleteClick(item, rowEl) {
+      if (!confirm('この記事を削除します。よろしいですか?')) { return; }
+
+      try {
+        var result = await gasPost({ action: 'delete', id: item.id });
+        if (!result.ok) { throw new Error(result.error || '削除に失敗しました'); }
+
+        rowEl.remove();
+        state.listItems = state.listItems.filter(function (it) { return it.id !== item.id; });
+        removeItemFromListCache(state.listCategory, item.id);
+      } catch (err) {
+        console.error('記事の削除に失敗しました:', err);
+        alert('削除に失敗しました: ' + String(err.message || err));
       }
     }
 

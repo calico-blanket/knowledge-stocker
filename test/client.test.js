@@ -361,6 +361,52 @@ test('編集UI: submitEditがeditSelectedTagsをtagsとしてGASへ送る', () =
   assert.match(m[1], /tags: state\.editSelectedTags/, '選択中のタグをtagsとして送ること');
 });
 
+// ---- 記事の削除（Phase5） ----------------------------------------------
+
+test('削除UI: idを持つ記事だけに削除ボタンを生成し、編集ボタンより弱い色のクラスを使う', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const m = html.match(/function renderListItems\(items, hasMore\) \{([\s\S]*?)\n    \}/);
+  assert.ok(m, 'renderListItems関数が存在すること');
+  assert.match(m[1], /if \(item\.id\) \{/, 'idがある記事だけ削除可能にすること');
+  assert.match(m[1], /list-item-delete/, '削除ボタン専用のCSSクラスを使うこと');
+  assert.match(m[1], /handleDeleteClick\(item, row\)/, '削除ボタンでhandleDeleteClickを呼ぶこと');
+});
+
+test('削除UI: 削除ボタンの色は編集ボタンより弱い（グレー系）配色にする', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const editCss = html.match(/\.list-item-edit \{([\s\S]*?)\}/);
+  const deleteCss = html.match(/\.list-item-delete \{([\s\S]*?)\}/);
+  assert.ok(editCss && deleteCss, '編集・削除ボタン両方のCSSが定義されていること');
+  assert.match(deleteCss[1], /#757575|#bdbdbd|gray|grey/i, '削除ボタンはグレー系の弱い色を使うこと');
+  assert.notStrictEqual(deleteCss[1].trim(), editCss[1].trim(), '削除ボタンは編集ボタンと異なる配色にすること');
+});
+
+test('削除UI: handleDeleteClickはconfirm()で1段階確認し、キャンセル時はgasPostを呼ばない', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const m = html.match(/async function handleDeleteClick\(item, rowEl\) \{([\s\S]*?)\n    \}/);
+  assert.ok(m, 'handleDeleteClick関数が存在すること');
+  assert.match(m[1], /confirm\('この記事を削除します。よろしいですか\?'\)/, '1段階のconfirm()で確認すること');
+  assert.match(m[1], /if \(!confirm\([\s\S]*?\)\) \{ return; \}/, 'キャンセル時は早期returnすること');
+});
+
+test('削除UI: handleDeleteClickはaction=deleteとidを送信し、成功時にDOM除去・state更新・キャッシュ更新を行う', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const m = html.match(/async function handleDeleteClick\(item, rowEl\) \{([\s\S]*?)\n    \}/);
+  assert.ok(m, 'handleDeleteClick関数が存在すること');
+  assert.match(m[1], /gasPost\(\{ action: 'delete', id: item\.id \}\)/, 'action=deleteとidを送信すること');
+  assert.match(m[1], /rowEl\.remove\(\)/, '成功時にDOM上の行を即除去すること');
+  assert.match(m[1], /state\.listItems = state\.listItems\.filter/, 'state.listItemsからも取り除くこと');
+  assert.match(m[1], /removeItemFromListCache\(state\.listCategory, item\.id\)/, 'キャッシュからも取り除くこと');
+});
+
+test('削除UI: removeItemFromListCacheは指定idの記事だけをキャッシュから取り除く', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const m = html.match(/function removeItemFromListCache\(category, id\) \{([\s\S]*?)\n    \}/);
+  assert.ok(m, 'removeItemFromListCache関数が存在すること');
+  assert.match(m[1], /cached\.items\.filter/, 'items配列をfilterで絞り込むこと');
+  assert.match(m[1], /saveCache\(LIST_CACHE_KEY, cacheMap\)/, '書き戻すこと');
+});
+
 // ---- PC対応4: レスポンシブ -------------------------------------------
 
 test('レスポンシブ: PC幅向けのメディアクエリがあり、スマホ既定スタイルは維持される', () => {

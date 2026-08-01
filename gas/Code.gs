@@ -186,6 +186,7 @@ function splitTagsText_(tagsText) {
  *   - addTag           : { name } をタグ一覧に追加
  *   - removeTag        : { name } をタグ一覧から削除（保存済みデータは残す）
  *   - reorderTags      : { tags } の順にタグの並び順を変更
+ *   - delete           : { id } で指定した保存済み記事をSheetsの行ごと物理削除
  * すべての action 共通で token（合言葉）を検証する。
  */
 function doPost(e) {
@@ -211,6 +212,8 @@ function doPost(e) {
         return jsonResponse_(handleRemoveTag_(body));
       case 'reorderTags':
         return jsonResponse_(handleReorderTags_(body));
+      case 'delete':
+        return jsonResponse_(handleDelete_(body));
       default:
         throw new Error('不明なactionです: ' + action);
     }
@@ -1032,6 +1035,38 @@ function handleUpdate_(body) {
   }
 
   return { ok: true, id: id, fileId: fileId, title: title, url: url, memo: memo, tags: tagsSpecified ? tags : null };
+}
+
+// ---- 保存済み記事の削除（action=delete） ----------------------
+
+/**
+ * 保存済み記事をSheetsの行ごと物理削除する(action=delete)。
+ * id（ID列のUUID）でのみ行を特定する（handleUpdate_と同じfindRowIndexById_を使い、
+ * 並行削除・並行編集で行番号がずれても呼び出しのたびに特定し直すため安全）。
+ * Drive上の過去Docs（fileId列が残っている行）は削除しない（非破壊。
+ * removeCategory_・removeTag_と同じ設計思想。Docsはもう正本ではないため）。
+ * この削除は取り消せない（deleteRowによる物理削除のため、復元する場合は
+ * スプレッドシートのバージョン履歴から手動で戻す必要がある）。
+ */
+function handleDelete_(body) {
+  var id = String(body.id || '').trim();
+  if (!id) {
+    throw new Error('削除対象が指定されていません');
+  }
+
+  var sheet = getOrCreateIndexSheet_();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    throw new Error('削除対象の記事が見つかりません');
+  }
+
+  var targetRow = findRowIndexById_(sheet, lastRow, id);
+  if (targetRow === -1) {
+    throw new Error('削除対象の記事が見つかりません');
+  }
+
+  sheet.deleteRow(targetRow);
+  return { ok: true, id: id };
 }
 
 /**
