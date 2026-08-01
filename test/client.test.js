@@ -324,6 +324,43 @@ test('編集UI: 編集は fire-and-forget にせず応答を待つ（gasPostをa
   assert.match(m[1], /await gasPost\(/, '編集は応答を待って結果を反映すること');
 });
 
+// ---- 編集モーダルのタグ編集UI（Phase4） -------------------------------
+
+test('編集UI: 編集モーダルにタグ選択欄のDOM idがある', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const editView = html.match(/<div id="editView"[\s\S]*?<\/div>\s*<\/div>/);
+  assert.ok(editView, 'editViewブロックが取得できること');
+  assert.match(editView[0], /id="editTagGrid"/, 'タグ選択欄のコンテナがeditView内にあること');
+});
+
+test('編集UI: openEditViewが対象記事のtagsをeditSelectedTagsへセットして描画する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const m = html.match(/function openEditView\(item\) \{([\s\S]*?)\n    \}/);
+  assert.ok(m, 'openEditView関数が存在すること');
+  assert.match(m[1], /state\.editSelectedTags = \(item\.tags \|\| \[\]\)\.slice\(\)/, '対象記事のtagsをコピーして初期選択にすること');
+  assert.match(m[1], /renderEditTagButtons\(\)/, 'タグボタンを再描画すること');
+});
+
+test('編集UI: renderEditTagButtonsは新規タグ作成をせず、既存タグ一覧のみをトグル表示する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const render = html.match(/function renderEditTagButtons\(\) \{([\s\S]*?)\n    \}/);
+  assert.ok(render, 'renderEditTagButtons関数が存在すること');
+  assert.match(render[1], /state\.tags\.forEach/, '現在のタグ一覧（state.tags）から描画すること');
+  assert.match(render[1], /toggleEditTag\(tag\)/, 'タップでtoggleEditTagを呼ぶこと');
+  assert.doesNotMatch(render[1], /addTag/, '編集モーダルから新規タグを作成する呼び出しを含まないこと');
+
+  const toggle = html.match(/function toggleEditTag\(tag\) \{([\s\S]*?)\n    \}/);
+  assert.ok(toggle, 'toggleEditTag関数が存在すること（複数選択のトグル）');
+  assert.match(toggle[1], /state\.editSelectedTags/, 'editSelectedTagsを操作すること');
+});
+
+test('編集UI: submitEditがeditSelectedTagsをtagsとしてGASへ送る', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const m = html.match(/async function submitEdit\(\) \{([\s\S]*?)\n    \}/);
+  assert.ok(m, 'submitEdit関数が存在すること');
+  assert.match(m[1], /tags: state\.editSelectedTags/, '選択中のタグをtagsとして送ること');
+});
+
 // ---- PC対応4: レスポンシブ -------------------------------------------
 
 test('レスポンシブ: PC幅向けのメディアクエリがあり、スマホ既定スタイルは維持される', () => {

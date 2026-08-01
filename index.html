@@ -474,6 +474,8 @@
         <input id="editUrlInput" type="url" placeholder="https:// で始まるURL">
         <label for="editMemoInput">メモ（任意）</label>
         <input id="editMemoInput" type="text" placeholder="メモ">
+        <label>タグ（任意）</label>
+        <div id="editTagGrid" class="tag-grid"></div>
         <p class="note">保存日時・カテゴリ・自動抽出された本文はそのまま保持されます。</p>
         <button id="editSaveButton" class="primary-button" type="button">更新する</button>
       </div>
@@ -504,7 +506,8 @@
     var state = {
       categories: [], tags: [], rootFolderUrl: '',
       listCategory: '', listItems: [], editingItem: null,
-      selectedCategory: '', selectedTags: []
+      selectedCategory: '', selectedTags: [],
+      editSelectedTags: []
     };
 
     // ============================================================
@@ -1142,7 +1145,41 @@
       document.getElementById('editTitleInput').value = item.title || '';
       document.getElementById('editUrlInput').value = item.url || '';
       document.getElementById('editMemoInput').value = item.memo || '';
+      state.editSelectedTags = (item.tags || []).slice();
+      renderEditTagButtons();
       showView('editView');
+    }
+
+    /** 編集ビューのタグボタン（複数選択チップ）を描画する。新規タグの作成はここでは行わない */
+    function renderEditTagButtons() {
+      var grid = document.getElementById('editTagGrid');
+      grid.innerHTML = '';
+      if (!state.tags.length) {
+        grid.innerHTML = '<p class="empty-state">タグはまだありません。設定画面から追加できます</p>';
+        return;
+      }
+      state.tags.forEach(function (tag) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'tag-button';
+        var selected = state.editSelectedTags.indexOf(tag) !== -1;
+        if (selected) { button.classList.add('tag-button-selected'); }
+        button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        button.textContent = tag;
+        button.addEventListener('click', function () { toggleEditTag(tag); });
+        grid.appendChild(button);
+      });
+    }
+
+    /** 編集ビューでのタグの選択/選択解除を切り替える（複数選択可） */
+    function toggleEditTag(tag) {
+      var index = state.editSelectedTags.indexOf(tag);
+      if (index === -1) {
+        state.editSelectedTags.push(tag);
+      } else {
+        state.editSelectedTags.splice(index, 1);
+      }
+      renderEditTagButtons();
     }
 
     /** 指定カテゴリの記事一覧キャッシュを破棄する（編集で内容が変わったとき用） */
@@ -1187,7 +1224,8 @@
           action: 'update',
           id: item.id || '',
           fileId: item.fileId || '',
-          title: title, url: url, memo: memo
+          title: title, url: url, memo: memo,
+          tags: state.editSelectedTags
         });
         if (!result.ok) { throw new Error(result.error || '更新に失敗しました'); }
 

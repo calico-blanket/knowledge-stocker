@@ -1809,3 +1809,111 @@ test('update: id指定でも SHARED_TOKEN 設定時は合言葉が照合され�
   assert.notStrictEqual(sheet._rows[1][2], '改ざん', '拒否時は行が書き換わらない');
 });
 
+// ---- handleUpdate_ の tags 対応（Phase4） -------------------------
+
+test('update: tagsを配列で指定するとタグ列が置き換わる', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { action: 'addTag', name: 'stock1' });
+  callDoPost(context, { action: 'addTag', name: 'stock2' });
+  callDoPost(context, {
+    url: 'https://example.com/orig', category: 'カテゴリA', tags: ['stock1']
+  });
+  const id = sheet._rows[1][7];
+
+  const result = callDoPost(context, {
+    action: 'update', id: id, title: 'タイトル', url: 'https://example.com/edited', memo: '',
+    tags: ['stock2']
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(Array.from(result.tags), ['stock2']);
+  assert.strictEqual(sheet._rows[1][6], 'stock2', 'タグ列がstock2のみに置き換わる');
+});
+
+test('update: tags未指定（配列でない）ならタグ列は現状を保持する', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { action: 'addTag', name: 'stock1' });
+  callDoPost(context, {
+    url: 'https://example.com/orig', category: 'カテゴリA', tags: ['stock1']
+  });
+  const id = sheet._rows[1][7];
+
+  const result = callDoPost(context, {
+    action: 'update', id: id, title: 'タイトル', url: 'https://example.com/edited', memo: ''
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.tags, null, '未指定時はtagsをnullで返す');
+  assert.strictEqual(sheet._rows[1][6], 'stock1', 'タグ列は変更されず保持される');
+});
+
+test('update: 空配列を指定するとタグ列が全クリアされる', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { action: 'addTag', name: 'stock1' });
+  callDoPost(context, {
+    url: 'https://example.com/orig', category: 'カテゴリA', tags: ['stock1']
+  });
+  const id = sheet._rows[1][7];
+
+  const result = callDoPost(context, {
+    action: 'update', id: id, title: 'タイトル', url: 'https://example.com/edited', memo: '',
+    tags: []
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(Array.from(result.tags), []);
+  assert.strictEqual(sheet._rows[1][6], '', 'タグ列が空になる');
+});
+
+test('update: 未登録タグを指定するとエラーになり、行が書き換わらない', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { action: 'addTag', name: 'stock1' });
+  callDoPost(context, {
+    url: 'https://example.com/orig', category: 'カテゴリA', tags: ['stock1']
+  });
+  const id = sheet._rows[1][7];
+  const before = sheet._rows[1].slice();
+
+  const result = callDoPost(context, {
+    action: 'update', id: id, title: 'タイトル', url: 'https://example.com/edited', memo: '',
+    tags: ['stock1', '未登録タグ']
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /不明なタグです/);
+  assert.deepStrictEqual(Array.from(sheet._rows[1]), Array.from(before), '既存行は変更されない');
+});
+
+test('update: tagsの前後空白は正規化されてから照合・保存される', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { action: 'addTag', name: 'stock1' });
+  callDoPost(context, { url: 'https://example.com/orig', category: 'カテゴリA' });
+  const id = sheet._rows[1][7];
+
+  const result = callDoPost(context, {
+    action: 'update', id: id, title: 'タイトル', url: 'https://example.com/edited', memo: '',
+    tags: ['', '  stock1  ']
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(Array.from(result.tags), ['stock1'], '空文字は除外・前後空白はtrimされること');
+  assert.strictEqual(sheet._rows[1][6], 'stock1');
+});
+
+test('update: fileIdフォールバック経路でもtagsが指定されれば反映される', () => {
+  const { context, sheet } = loadGasScript({ categories: ['カテゴリA'] });
+  callDoPost(context, { action: 'addTag', name: 'stock1' });
+  const { fileId } = seedLegacyArticle(context, {
+    savedAt: '2026-07-01 10:00', category: 'カテゴリA',
+    title: '旧記事', url: 'https://example.com/old', memo: '旧メモ'
+  });
+
+  const result = callDoPost(context, {
+    action: 'update', fileId: fileId,
+    title: '新タイトル', url: 'https://example.com/new', memo: '', tags: ['stock1']
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(sheet._rows[1][6], 'stock1');
+});
+
