@@ -76,6 +76,10 @@ function createSheetStub(maxColumns = 26) {
       rows.push(values.slice());
       formulas.push(values.map(() => '')); // 追記直後は数式なし
     },
+    deleteRow(rowNumber) {
+      rows.splice(rowNumber - 1, 1);
+      formulas.splice(rowNumber - 1, 1);
+    },
     setFrozenRows() {},
     getLastRow() { return rows.length; },
     getMaxColumns() { return columnCount; },
@@ -1419,7 +1423,8 @@ test('Code.gs: 主要関数の定義がそれぞれちょうど1つである（�
     'rebuildDocContent_', 'extractDocOriginalUrl_', 'extractDocBodyText_',
     'getTags_', 'saveTags_', 'sanitizeTagName_', 'normalizeTagsInput_',
     'handleAddTag_', 'handleRemoveTag_', 'handleReorderTags_', 'fetchPageTitle_',
-    'splitTagsText_', 'migrateRowIds_', 'findRowIndexById_', 'ensureIndexColumns_'
+    'splitTagsText_', 'migrateRowIds_', 'findRowIndexById_', 'ensureIndexColumns_',
+    'handleDelete_'
   ];
   for (const fn of names) {
     const definitions = source.match(new RegExp('function ' + fn + '\\(', 'g')) || [];
@@ -1915,5 +1920,147 @@ test('update: fileIdフォールバック経路でもtagsが指定されれば�
 
   assert.strictEqual(result.ok, true);
   assert.strictEqual(sheet._rows[1][6], 'stock1');
+});
+
+// ============================================================
+// 記事の削除（action=delete）
+// ============================================================
+
+test('削除API: 存在するidを削除すると行数が1減り、他の行は変わらない', () => {
+  const { context, sheet } = loadGasScript({
+    fetchImpl: (url) => makeFetchResponse({ body: '<title>記事' + url.split('/').pop() + '</title>' })
+  });
+  callDoPost(context, { url: 'https://example.com/a', category: 'PC系', memo: 'メモA' });
+  callDoPost(context, { url: 'https://example.com/b', category: 'PC系', memo: 'メモB' });
+
+  const listed = callDoGetList(context, 'PC系');
+  const target = listed.items[1]; // 古い方（記事a）を削除する
+  assert.strictEqual(target.url, 'https://example.com/a');
+  const rowCountBefore = sheet._rows.length;
+
+  const result = callDoPost(context, { action: 'delete', id: target.id });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.id, target.id);
+
+  assert.strictEqual(sheet._rows.length, rowCountBefore - 1, '行数が1減る');
+  const after = callDoGetList(context, 'PC系');
+  assert.strictEqual(after.items.length, 1, '一覧からも消える');
+  assert.strictEqual(after.items[0].title, '記事b', '残った行は変更されない');
+  assert.strictEqual(after.items[0].memo, 'メモB');
+});
+
+test('削除API: 存在しないidは「削除対象の記事が見つかりません」エラーになり、行は変更されない', () => {
+  const { context, sheet } = loadGasScript();
+  callDoPost(context, { url: 'https://example.com/a', category: 'PC系' });
+  const before = sheet._rows.map((r) => r.slice());
+
+  const result = callDoPost(context, { action: 'delete', id: 'uuid-存在しない' });
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /削除対象の記事が見つかりません/);
+  assert.deepStrictEqual(sheet._rows, before, 'どの行も変更されない');
+});
+
+test('削除API: idが指定されていない場合は「削除対象が指定されていません」エラー', () => {
+  const { context } = loadGasScript();
+  const result = callDoPost(context, { action: 'delete' });
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /削除対象が指定されていません/);
+});
+
+test('削除API: idが空白のみの場合も「削除対象が指定されていません」エラー（trim後に空判定）', () => {
+  const { context } = loadGasScript();
+  const result = callDoPost(context, { action: 'delete', id: '   ' });
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /削除対象が指定されていません/);
+});
+
+test('削除API: idの前後に空白があっても正しく一致してtrim後の値で削除される', () => {
+  const { context, sheet } = loadGasScript();
+  callDoPost(context, { url: 'https://example.com/a', category: 'PC系' });
+  const listed = callDoGetList(context, 'PC系');
+  const id = listed.items[0].id;
+
+  const result = callDoPost(context, { action: 'delete', id: '  ' + id + '  ' });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(sheet._rows.length, 1, 'ヘッダのみになる');
+});
+
+test('削除API: データ行が1件も無い状態での削除は「削除対象の記事が見つかりません」エラー', () => {
+  const { context } = loadGasScript();
+  const result = callDoPost(context, { action: 'delete', id: 'uuid-1' });
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /削除対象の記事が見つかりません/);
+});
+
+test('削除API: token不一致は「合言葉が一致しません」エラーになり、行は削除されない', () => {
+  const { context, sheet } = loadGasScript({ scriptProperties: { SHARED_TOKEN: 'aikotoba' } });
+  callDoPost(context, { url: 'https://example.com/a', category: 'PC系', token: 'aikotoba' });
+  const listed = callDoGetList(context, 'PC系', 'aikotoba');
+  const id = listed.items[0].id;
+  const before = sheet._rows.map((r) => r.slice());
+
+  const result = callDoPost(context, { action: 'delete', id: id, token: 'ちがう' });
+  assert.strictEqual(result.ok, false);
+  assert.match(result.error, /合言葉が一致しません/);
+  assert.deepStrictEqual(sheet._rows, before, '行は削除されない');
+});
+
+test('削除API: Drive上のGoogleドキュメント（fileId列）は削除されない（非破壊）', () => {
+  const { context, sheet } = loadGasScript();
+  const { fileId } = seedLegacyArticle(context, {
+    savedAt: '2026-07-01 10:00', category: 'PC系', title: '旧記事', url: 'https://example.com/old', memo: ''
+  });
+
+  // 一覧取得でマイグレーションが走り、legacy行にもidが付く
+  const listed = callDoGetList(context, 'PC系');
+  const id = listed.items[0].id;
+
+  const result = callDoPost(context, { action: 'delete', id: id });
+  assert.strictEqual(result.ok, true);
+
+  const after = callDoGetList(context, 'PC系');
+  assert.strictEqual(after.items.length, 0, 'Sheets行は削除される');
+  // DocumentApp.openByIdが例外を投げなければDocは残っている（スタブは削除時にdocsByIdから除去しない実装のため）
+  assert.doesNotThrow(() => context.DocumentApp.openById(fileId), 'Drive上のDocsは削除されず開けたままである');
+});
+
+test('削除API: ID重複行がある場合は先頭（最古）の一致行だけが削除される', () => {
+  const { context, sheet } = loadGasScript();
+  sheet.appendRow(['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID']);
+  sheet.appendRow(['2026-07-01 10:00', 'PC系', '重複1', 'https://example.com/1', '', '', '', 'dup-id']);
+  sheet.appendRow(['2026-07-02 10:00', 'PC系', '重複2', 'https://example.com/2', '', '', '', 'dup-id']);
+
+  const result = callDoPost(context, { action: 'delete', id: 'dup-id' });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(sheet._rows.length, 2, 'ヘッダ+重複2のみ残る（2行）');
+  assert.strictEqual(sheet._rows[1][2], '重複2', '後続の重複行は残る');
+});
+
+test('削除API: 並行編集で対象より前の行が別途削除され行番号がずれても、idで正しい行を特定して削除する', () => {
+  const { context, sheet } = loadGasScript({
+    fetchImpl: (url) => makeFetchResponse({ body: '<title>記事' + url.split('/').pop() + '</title>' })
+  });
+  callDoPost(context, { url: 'https://example.com/a', category: 'PC系' });
+  callDoPost(context, { url: 'https://example.com/b', category: 'PC系' });
+  callDoPost(context, { url: 'https://example.com/c', category: 'PC系' });
+
+  const listed = callDoGetList(context, 'PC系');
+  const idA = listed.items[2].id; // 記事a（最古・2行目）
+  const idC = listed.items[0].id; // 記事c（最新・4行目）
+
+  // 別クライアントが先に記事aを削除する（=クライアントBが記事cのidを取得した時点の
+  // 行番号想定と、実際の削除実行時点でずれが生じる状況を再現）。
+  const first = callDoPost(context, { action: 'delete', id: idA });
+  assert.strictEqual(first.ok, true, '記事aの削除が先に成功する');
+  assert.strictEqual(sheet._rows.length, 3, 'ヘッダ+2行（b, c）に減る');
+
+  // クライアントBは古い行番号を覚えず、idCで再度特定して削除する（実装が
+  // handleUpdate_と同じ「毎回idで走査し直す」方式であることの検証）。
+  const second = callDoPost(context, { action: 'delete', id: idC });
+  assert.strictEqual(second.ok, true, '行番号がずれてもidで記事cを正しく削除できる');
+
+  const after = callDoGetList(context, 'PC系');
+  assert.strictEqual(after.items.length, 1, '記事bのみ残る');
+  assert.strictEqual(after.items[0].title, '記事b');
 });
 
