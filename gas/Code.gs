@@ -47,8 +47,11 @@ var TIME_ZONE = 'Asia/Tokyo';
 // スプレッドシートIDをスクリプトプロパティに保持する必要はなく、
 // SpreadsheetApp.getActiveSpreadsheet() で自分自身（バインド先）を直接参照する。
 var INDEX_SHEET_NAME = 'ナレッジ一覧';
-var INDEX_HEADER = ['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ'];
-var INDEX_COL = { SAVED_AT: 1, CATEGORY: 2, TITLE: 3, URL: 4, MEMO: 5, FILE: 6, TAGS: 7 };
+// ID列は行を一意に識別するUUID（migrateRowIds_ が既存行へ後から付与する）。
+// 列は必ず末尾に足すこと。途中に挿入すると既存シートの全データを物理的にずらす必要があり、
+// 破壊的な移行になるため（末尾追加なら既存列の位置は変わらない）。
+var INDEX_HEADER = ['日時', 'カテゴリ', 'タイトル', 'URL', 'メモ', 'Driveファイル', 'タグ', 'ID'];
+var INDEX_COL = { SAVED_AT: 1, CATEGORY: 2, TITLE: 3, URL: 4, MEMO: 5, FILE: 6, TAGS: 7, ID: 8 };
 
 // 一覧APIで一度に返す件数（1ページ分）。
 // 件数が増えてもレスポンスが重くならないよう50件で区切り、
@@ -147,6 +150,8 @@ function handleList_(category, token, offsetParam) {
       }
       var fileFormula = fileFormulas[i - 1] ? fileFormulas[i - 1][0] : '';
       items.push({
+        // id は編集・削除時の行特定キー。fileId は旧データ向けのフォールバック
+        id: String(row[INDEX_COL.ID - 1] == null ? '' : row[INDEX_COL.ID - 1]).trim(),
         savedAt: row[INDEX_COL.SAVED_AT - 1],
         title: row[INDEX_COL.TITLE - 1],
         url: row[INDEX_COL.URL - 1],
@@ -786,17 +791,99 @@ function buildMarkdown_(title, url, savedAt, category, memo, bodyText, originalU
  * getActiveSpreadsheet() で自分自身（バインド先）を直接参照する
  * （openByIdでの外部参照・IDのスクリプトプロパティ保持は不要）。
  * シートが空（初回バインド直後等）ならヘッダー行を書き込んで初期化する。
- * 列追加前から運用しているシート（「タグ」ヘッダーが無い）は、ヘッダーだけ補完する。
+ * 列追加前から運用しているシート（「タグ」「ID」ヘッダーが無い）は、ヘッダーを補完したうえで
+ * migrateRowIds_ で既存行にID（UUID）を後から付与する。
  */
 function getOrCreateIndexSheet_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(INDEX_HEADER);
     sheet.setFrozenRows(1);
-  } else if (!sheet.getRange(1, INDEX_COL.TAGS).getValue()) {
+    return sheet;
+  }
+
+  // 不要な列を削除して運用しているシートだと、ID列（H列）自体が存在せず
+  // getRange が範囲外エラーになるため、足りない分の列を先に確保する。
+  ensureIndexColumns_(sheet);
+
+  // 列追加前から運用しているシートのヘッダー補完（タグ列・ID列）。
+  // 空のときだけ書き込むので、既にヘッダーがあるシートでは何もしない。
+  if (!sheet.getRange(1, INDEX_COL.TAGS).getValue()) {
     sheet.getRange(1, INDEX_COL.TAGS).setValue(INDEX_HEADER[INDEX_COL.TAGS - 1]);
   }
+  if (!sheet.getRange(1, INDEX_COL.ID).getValue()) {
+    sheet.getRange(1, INDEX_COL.ID).setValue(INDEX_HEADER[INDEX_COL.ID - 1]);
+  }
+
+  migrateRowIds_(sheet);
   return sheet;
+}
+
+/**
+ * インデックスシートに INDEX_HEADER 分の列数を確保する。
+ * 通常のスプレッドシートは初期状態で26列（A〜Z）あるため何もしないが、
+ * 余分な列を削除して運用しているシートではID列（H列）が存在せず、
+ * getRange(1, INDEX_COL.ID) が範囲外エラーになるため、不足分を追加する。
+ */
+function ensureIndexColumns_(sheet) {
+  var maxColumns = sheet.getMaxColumns();
+  if (maxColumns < INDEX_HEADER.length) {
+    sheet.insertColumnsAfter(maxColumns, INDEX_HEADER.length - maxColumns);
+  }
+}
+
+/**
+ * ID列が空のデータ行にUUIDを発行する（既存シートの移行用）。
+ *
+ * 冪等性の担保: 書き込むのは「ID列が空文字（トリム後）の行」だけで、
+ * 既に値が入っている行は型を問わず（数値・文字列いずれでも）そのまま温存する。
+ * このため何回実行してもID列の内容は初回実行後から変化しない。
+ * 空の行が1件も無ければ書き込み自体を行わずに戻る（無駄なsetValuesを避ける）。
+ *
+ * 既存IDが重複していても修復はしない（「既存の値は触らない」を優先する）。
+ * 重複時にどの行が選ばれるかは findRowIndexById_ 側の規約（先頭＝最古を採用）で決まる。
+ */
+function migrateRowIds_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return; // ヘッダーのみ、またはデータ無し
+  }
+
+  var range = sheet.getRange(2, INDEX_COL.ID, lastRow - 1, 1);
+  var ids = range.getValues();
+  var filled = 0;
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0] == null ? '' : ids[i][0]).trim() === '') {
+      ids[i][0] = Utilities.getUuid();
+      filled++;
+    }
+  }
+  if (filled > 0) {
+    range.setValues(ids);
+  }
+}
+
+/**
+ * ID列の値が id と一致する行の行番号（1始まり）を返す純粋な検索関数。
+ * 見つからなければ -1 を返す。
+ *
+ * 比較は文字列化・トリムしてから行う（ID列がテキストではなく数値として
+ * 保存されているシートでも一致させるため）。
+ * ID重複時は先頭（＝最古の行）を採用する。
+ */
+function findRowIndexById_(sheet, lastRow, id) {
+  var needle = String(id == null ? '' : id).trim();
+  if (!needle || lastRow < 2) {
+    return -1;
+  }
+
+  var ids = sheet.getRange(2, INDEX_COL.ID, lastRow - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0] == null ? '' : ids[i][0]).trim() === needle) {
+      return i + 2; // ヘッダ1行 + 0始まりindex の分をずらして実際の行番号にする
+    }
+  }
+  return -1;
 }
 
 /**
@@ -804,9 +891,12 @@ function getOrCreateIndexSheet_() {
  * タイトル列は元記事URLへのHYPERLINK。Driveファイル列は、以前の運用（Googleドキュメント
  * への転記）で作成した記事にのみリンクが入っていたため、新規保存では常に空のままにする。
  * タグ列は複数タグを ", " 区切りで1セルにまとめる（集計・フィルタしやすい形式）。
+ * ID列には行を一意に識別するUUIDを必ず発行する（編集・削除時の行特定キー）。
+ * 発行したIDは戻り値として返す。
  */
 function appendIndexRow_(savedAt, category, title, url, memo, tags) {
   var sheet = getOrCreateIndexSheet_();
+  var id = Utilities.getUuid();
   // 自由入力由来の値（タイトル・メモ・カテゴリ・タグ）はセル値としてサニタイズする。
   // GASの appendRow/setValue は先頭が = の文字列を数式として解釈するため、
   // ページタイトルや共有メモに =IMPORTXML(...) 等が入っていると実行されてしまう。
@@ -817,7 +907,8 @@ function appendIndexRow_(savedAt, category, title, url, memo, tags) {
     url,
     sanitizeCellText_(memo || ''),
     '',
-    sanitizeCellText_(tags.join(', '))
+    sanitizeCellText_(tags.join(', ')),
+    id
   ]);
   var lastRow = sheet.getLastRow();
 
@@ -825,6 +916,8 @@ function appendIndexRow_(savedAt, category, title, url, memo, tags) {
   titleCell.setFormula(
     '=HYPERLINK("' + escapeFormulaString_(url) + '","' + escapeFormulaString_(title) + '")'
   );
+
+  return id;
 }
 
 /**
@@ -849,22 +942,26 @@ function extractFileIdFromFormula_(formula) {
 
 /**
  * 保存済み記事の内容（タイトル・URL・メモ）を編集する(action=update)。
- * fileId（GoogleドキュメントのID）を一意キーに、Sheetsインデックスの該当行と
- * 対応するGoogleドキュメント本文の両方を更新する。
+ * 行の特定キーは id（ID列のUUID）優先・fileId（GoogleドキュメントのID）フォールバック:
+ *   - id指定時: ID列の一致行のSheetsのみ更新する（DocumentApp操作はスキップ。
+ *     新規保存の記事はDocを持たないため）。ID重複時は先頭（最古）の一致行を採用する
+ *   - fileIdのみ指定時: 従来動作（Sheets行と対応するGoogleドキュメント本文の両方を更新）
  *
  * 行特定は「Sheetsインデックスに載っている記事のみ」に限定する（任意のfileIdで
  * 自分のDrive上の無関係なファイルを触られないよう、一覧に存在する行だけを対象にする）。
  * 保存日時とカテゴリは編集対象外で、Doc再構築時はSheets行の値をそのまま引き継ぐ。
  * ドキュメントの「本文（自動抽出・参考）」節と「共有時のURL」行は保持する。
+ * （tagsフィールドの扱いはPhase4で対応するため、ここでは触れない）
  */
 function handleUpdate_(body) {
   // ステップ1: 入力検証（save と同じ方針: http/https のみ、タイトル必須）
+  var id = String(body.id || '').trim();
   var fileId = String(body.fileId || '').trim();
   var title = String(body.title || '').trim();
   var url = String(body.url || '').trim();
   var memo = String(body.memo || '').trim();
 
-  if (!fileId) {
+  if (!id && !fileId) {
     throw new Error('編集対象が指定されていません');
   }
   if (!title) {
@@ -874,18 +971,23 @@ function handleUpdate_(body) {
     throw new Error('URLの形式が不正です: ' + url);
   }
 
-  // ステップ2: Sheetsインデックスから fileId 一致行を特定する
+  // ステップ2: Sheetsインデックスから対象行を特定する（id優先・fileIdフォールバック）
   var sheet = getOrCreateIndexSheet_();
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) {
     throw new Error('編集対象の記事が見つかりません');
   }
-  var fileFormulas = sheet.getRange(2, INDEX_COL.FILE, lastRow - 1, 1).getFormulas();
+
   var targetRow = -1;
-  for (var i = 0; i < fileFormulas.length; i++) {
-    if (extractFileIdFromFormula_(fileFormulas[i][0]) === fileId) {
-      targetRow = i + 2; // ヘッダ1行 + 0始まりindex の分をずらして実際の行番号にする
-      break;
+  if (id) {
+    targetRow = findRowIndexById_(sheet, lastRow, id);
+  } else {
+    var fileFormulas = sheet.getRange(2, INDEX_COL.FILE, lastRow - 1, 1).getFormulas();
+    for (var i = 0; i < fileFormulas.length; i++) {
+      if (extractFileIdFromFormula_(fileFormulas[i][0]) === fileId) {
+        targetRow = i + 2; // ヘッダ1行 + 0始まりindex の分をずらして実際の行番号にする
+        break;
+      }
     }
   }
   if (targetRow === -1) {
@@ -903,14 +1005,17 @@ function handleUpdate_(body) {
     '=HYPERLINK("' + escapeFormulaString_(url) + '","' + escapeFormulaString_(title) + '")'
   );
 
-  // ステップ4: Googleドキュメント本文を更新する（自動抽出本文・共有時URLは保持）
-  var doc = DocumentApp.openById(fileId);
-  var currentText = doc.getBody().getText();
-  var newContent = rebuildDocContent_(currentText, savedAt, category, title, url, memo);
-  doc.getBody().setText(newContent);
-  doc.saveAndClose();
+  // ステップ4: fileId指定の旧データのみ、Googleドキュメント本文も更新する
+  // （自動抽出本文・共有時URLは保持。id指定の記事はDocを持たないためスキップする）
+  if (!id) {
+    var doc = DocumentApp.openById(fileId);
+    var currentText = doc.getBody().getText();
+    var newContent = rebuildDocContent_(currentText, savedAt, category, title, url, memo);
+    doc.getBody().setText(newContent);
+    doc.saveAndClose();
+  }
 
-  return { ok: true, fileId: fileId, title: title, url: url, memo: memo };
+  return { ok: true, id: id, fileId: fileId, title: title, url: url, memo: memo };
 }
 
 /**

@@ -1105,9 +1105,10 @@
 
         row.appendChild(link);
 
-        // fileId のある記事（Docが特定できる記事）だけ編集可能にする。
-        // 旧データでDriveファイル列が空の行は fileId が無いため編集ボタンを出さない。
-        if (item.fileId) {
+        // 行を特定できる記事だけ編集可能にする。
+        // id（ID列のUUID）があれば新規保存の記事でも編集でき、id を持たない
+        // 移行前の旧データは従来どおり fileId をフォールバックの特定キーにする。
+        if (item.id || item.fileId) {
           var editBtn = document.createElement('button');
           editBtn.type = 'button';
           editBtn.className = 'list-item-edit';
@@ -1160,7 +1161,7 @@
      */
     async function submitEdit() {
       var item = state.editingItem;
-      if (!item || !item.fileId) {
+      if (!item || (!item.id && !item.fileId)) {
         alert('編集対象が不明です。一覧からやり直してください。');
         return;
       }
@@ -1179,8 +1180,14 @@
       button.disabled = true;
       button.textContent = '更新中…';
       try {
+        // id を優先キーとして送り、fileId はフォールバックとして併せて送る。
+        // GAS側は id があればそれで行を特定し（Docは触らない）、無ければ fileId で
+        // 従来どおりGoogleドキュメント本文も更新する。
         var result = await gasPost({
-          action: 'update', fileId: item.fileId, title: title, url: url, memo: memo
+          action: 'update',
+          id: item.id || '',
+          fileId: item.fileId || '',
+          title: title, url: url, memo: memo
         });
         if (!result.ok) { throw new Error(result.error || '更新に失敗しました'); }
 
